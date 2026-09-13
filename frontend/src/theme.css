@@ -1,0 +1,10 @@
+:root {
+  --canvas: #f5f7fa;
+  --ink: #203247;
+  --muted: #5f7082;
+  --navy: #162c40;
+  --primary: #21617e;
+  --teal: #64b8af;
+  --line: #e1e7ed;
+  --font: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
