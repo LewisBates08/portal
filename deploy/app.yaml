@@ -1,0 +1,73 @@
+# Complete domain, VPC, repository/image and runtime settings before provisioning.
+# Use the same tested image digest for the service and every job.
+name: searchroom
+region: lon
+services:
+  - name: portal
+    image:
+      registry_type: GHCR
+      registry: YOUR_GITHUB_ORG
+      repository: searchroom
+      digest: sha256:REPLACE_WITH_TESTED_IMAGE_DIGEST
+    instance_count: 1
+    instance_size_slug: apps-s-1vcpu-2gb
+    run_command: python bootstrap.py uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 1 --limit-concurrency 40 --timeout-keep-alive 5 --no-access-log
+    http_port: 8000
+    health_check:
+      http_path: /api/v1/health/ready
+    alerts:
+      - rule: CPU_UTILIZATION
+        operator: GREATER_THAN
+        value: 80
+        window: FIVE_MINUTES
+      - rule: MEM_UTILIZATION
+        operator: GREATER_THAN
+        value: 80
+        window: FIVE_MINUTES
+jobs:
+  - name: migrate
+    kind: PRE_DEPLOY
+    image: &image
+      registry_type: GHCR
+      registry: YOUR_GITHUB_ORG
+      repository: searchroom
+      digest: sha256:REPLACE_WITH_TESTED_IMAGE_DIGEST
+    instance_count: 1
+    instance_size_slug: apps-s-1vcpu-1gb
+    run_command: python bootstrap.py python -m app.operations migrate
+  - name: cleanup
+    kind: SCHEDULED
+    schedule:
+      cron: '0 3 * * *'
+      time_zone: UTC
+    image: *image
+    instance_count: 1
+    instance_size_slug: apps-s-1vcpu-1gb
+    run_command: python bootstrap.py python -m app.operations cleanup
+  - name: backup
+    kind: SCHEDULED
+    schedule:
+      cron: '0 2 * * *'
+      time_zone: UTC
+    image: *image
+    instance_count: 1
+    instance_size_slug: apps-s-1vcpu-1gb
+    run_command: python bootstrap.py python -m app.operations backup
+  - name: operations-check
+    kind: SCHEDULED
+    schedule:
+      cron: '*/15 * * * *'
+      time_zone: UTC
+    image: *image
+    instance_count: 1
+    instance_size_slug: apps-s-1vcpu-1gb
+    run_command: python bootstrap.py python -m app.operations check
+workers:
+  - name: email
+    image: *image
+    instance_count: 1
+    instance_size_slug: apps-s-1vcpu-0.5gb
+    run_command: python bootstrap.py python -m app.operations mail-loop
+alerts:
+  - rule: DEPLOYMENT_FAILED
+  - rule: DOMAIN_FAILED

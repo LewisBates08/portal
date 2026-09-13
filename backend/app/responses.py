@@ -1,4 +1,5 @@
 """Explicit response contracts keep secret columns out of API responses."""
+
 from datetime import datetime
 from pydantic import BaseModel
 from .schemas import CandidateData, DocumentData, MilestoneData, ProjectData, Role
@@ -11,16 +12,9 @@ class UserView(BaseModel):
     role: Role
     agency_id: int
     client_org_id: int | None
-
-
-class TokenView(BaseModel):
-    access_token: str
-    refresh_token: str
-    token_type: str
-
-
-class LoginView(TokenView):
-    user: UserView
+    active: bool
+    email_verified: bool
+    mfa_enabled: bool
 
 
 class InviteInfo(BaseModel):
@@ -57,6 +51,7 @@ class ProjectView(ProjectData):
     agency_id: int
     client_org_id: int
     client_name: str
+    archived_at: datetime | None = None
     unread_count: int
     created_at: datetime
 
@@ -94,9 +89,20 @@ class MessageView(EntryView):
 class PostView(EntryView):
     project_id: int
     attachment_url: str | None
-    comments: list[CommentView]
+    comments: list[CommentView] = []
+    comment_count: int = 0
 
 
 class MilestoneView(MilestoneData):
     id: int
     project_id: int
+
+
+from typing import Generic, TypeVar
+
+T = TypeVar("T")
+
+
+class PageView(BaseModel, Generic[T]):
+    items: list[T]
+    next_cursor: int | None

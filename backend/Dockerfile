@@ -1,6 +1,8 @@
+# Local development API. Run migrations separately before starting.
 FROM python:3.13-slim
 WORKDIR /app
-COPY requirements.lock .
-RUN pip install --no-cache-dir -r requirements.lock
+COPY requirements.lock ./
+RUN pip install --no-cache-dir -r requirements.lock && useradd --uid 10001 portal
 COPY . .
-CMD ["sh", "-c", "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"]
+USER 10001
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

@@ -1,3 +1,4 @@
+# Local Compose frontend. Production uses the root multi-stage Dockerfile.
 FROM node:24-alpine
 WORKDIR /app
 COPY package*.json ./

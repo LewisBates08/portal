@@ -12,6 +12,17 @@ services:
       interval: 3s
       timeout: 3s
       retries: 20
+  migrate:
+    build: ./backend
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-portal}:${POSTGRES_PASSWORD:-portal}@db:5432/${POSTGRES_DB:-portal}
+      JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in .env}
+    command: ["python", "-m", "app.operations", "migrate"]
+    depends_on:
+      db: {condition: service_healthy}
+  mailpit:
+    image: axllent/mailpit:v1.29
+    ports: ["127.0.0.1:8025:8025", "127.0.0.1:1025:1025"]
   backend:
     build: ./backend
     environment:
@@ -19,9 +30,20 @@ services:
       JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in .env}
       FRONTEND_URL: ${FRONTEND_URL:-http://localhost:5173}
       AUTH_RATE_LIMIT: ${AUTH_RATE_LIMIT:-30}
+      SMTP_HOST: mailpit
     ports: ["127.0.0.1:8000:8000"]
     depends_on:
-      db: {condition: service_healthy}
+      migrate: {condition: service_completed_successfully}
+  mail:
+    build: ./backend
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-portal}:${POSTGRES_PASSWORD:-portal}@db:5432/${POSTGRES_DB:-portal}
+      JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in .env}
+      SMTP_HOST: mailpit
+    command: ["sh", "-c", "while true; do python -m app.operations mail; sleep 10; done"]
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+      mailpit: {condition: service_started}
   frontend:
     build: ./frontend
     environment:

@@ -2,9 +2,9 @@ import { createContext, useContext, useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import { Link, Navigate, Outlet, useNavigate } from "react-router-dom";
 import { ArrowRight, Layers3 } from "lucide-react";
-import { api, saveTokens, tokens } from "./api";
+import { api, authChanged, ApiError } from "./api";
 import { ErrorBox, Field, Form, Loading, str } from "./ui";
-import type { Tokens, User } from "./types";
+import type { Account, User } from "./types";
 
 const AuthContext = createContext<{
   user: User | null;
@@ -16,55 +16,63 @@ export const useAuth = () => useContext(AuthContext);
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
+  const [account, setAccount] = useState<Account | null>(null);
   const [error, setError] = useState("");
   useEffect(() => {
+    let revision = 0;
+    let alive = true;
     const sync = () => {
-      if (!tokens()) setUser(null);
+      const current = ++revision;
+      setUser(null);
+      setAccount(null);
+      setLoading(true);
+      api<Account>("/auth/me", "GET", undefined, false)
+        .then((value) => {
+          if (alive && current === revision) {
+            setAccount(value);
+            if (!value.mfa_required) setUser(value.user);
+          }
+        })
+        .catch((e) => {
+          if (
+            alive &&
+            current === revision &&
+            !(e instanceof ApiError && e.status === 401)
+          )
+            setError(e.message);
+        })
+        .finally(() => {
+          if (alive && current === revision) setLoading(false);
+        });
     };
+    sync();
     window.addEventListener("auth-change", sync);
-    window.addEventListener("storage", sync);
-    if (tokens())
-      api<User>("/auth/me")
-        .then(setUser)
-        .catch((e) => setError(e.message))
-        .finally(() => setLoading(false));
-    else setLoading(false);
     return () => {
+      alive = false;
+      revision++;
       window.removeEventListener("auth-change", sync);
-      window.removeEventListener("storage", sync);
     };
   }, []);
   async function signOut() {
-    const current = tokens();
-    if (current)
-      await api(
-        "/auth/logout",
-        "POST",
-        { refresh_token: current.refresh_token },
-        false,
-      );
-    saveTokens(null);
+    await api("/auth/logout", "POST");
+    setAccount(null);
     setUser(null);
+    authChanged();
   }
   return (
     <AuthContext.Provider value={{ user, loading, setUser, signOut }}>
-      {error && !user && (
-        <div className="connection-error">
-          <ErrorBox message={error} />
-          <button onClick={() => window.location.reload()}>
-            Retry connection
-          </button>
-          <button
-            onClick={() => {
-              saveTokens(null);
-              setError("");
-            }}
-          >
-            Return to sign in
-          </button>
-        </div>
+      {error && <ErrorBox message={error} />}
+      {account?.mfa_required ? (
+        <MfaPage
+          setup={account.mfa_setup}
+          done={() => {
+            setAccount(null);
+            authChanged();
+          }}
+        />
+      ) : (
+        <div key={user?.id ?? "anonymous"}>{children}</div>
       )}
-      {children}
     </AuthContext.Provider>
   );
 }
@@ -76,6 +84,73 @@ export function Protected() {
     <Outlet />
   ) : (
     <Navigate to="/login" replace />
+  );
+}
+export function MfaPage({ setup, done }: { setup: boolean; done: () => void }) {
+  const [secret, setSecret] = useState("");
+  const [codes, setCodes] = useState<string[]>([]);
+  return (
+    <AuthLayout
+      title={
+        setup
+          ? "Protect your administrator account"
+          : "Verify your authenticator"
+      }
+    >
+      {codes.length ? (
+        <>
+          <p>Save these recovery codes somewhere private. Each works once.</p>
+          <pre>{codes.join("\n")}</pre>
+          <button className="button" onClick={done}>
+            I have saved my recovery codes
+          </button>
+        </>
+      ) : (
+        <>
+          {setup && (
+            <>
+              <p>
+                Add a time-based account in your authenticator app using this
+                setup key.
+              </p>
+              <Form
+                submit="Generate setup key"
+                onSubmit={async () => {
+                  const result = await api<{ secret: string }>(
+                    "/auth/mfa/setup",
+                    "POST",
+                  );
+                  setSecret(result.secret);
+                }}
+              >
+                {secret && <code>{secret}</code>}
+              </Form>
+            </>
+          )}
+          {(!setup || secret) && (
+            <Form
+              submit="Verify code"
+              onSubmit={async (f) => {
+                const result = await api<{ recovery_codes: string[] }>(
+                  "/auth/mfa/verify",
+                  "POST",
+                  { code: str(f, "code") },
+                );
+                if (result.recovery_codes.length)
+                  setCodes(result.recovery_codes);
+                else done();
+              }}
+            >
+              <Field
+                name="code"
+                label="Authenticator or recovery code"
+                required
+              />
+            </Form>
+          )}
+        </>
+      )}
+    </AuthLayout>
   );
 }
 export function Brand() {
@@ -141,14 +216,14 @@ export function LoginPage() {
       <Form
         submit="Sign in"
         onSubmit={async (f) => {
-          const result = await api<Tokens & { user: User }>(
+          const result = await api<Account>(
             "/auth/login",
             "POST",
             { email: str(f, "email"), password: String(f.get("password")) },
             false,
           );
-          saveTokens(result);
-          setUser(result.user);
+          if (!result.mfa_required) setUser(result.user);
+          authChanged();
           navigate(invite ? `/invite#token=${invite}` : "/");
         }}
       >
@@ -164,6 +239,10 @@ export function LoginPage() {
           />
         </label>
       </Form>
+      <p>
+        <Link to="/account/forgot">Forgot password?</Link> ·{" "}
+        <Link to="/account/resend">Resend verification</Link>
+      </p>
       <p className="auth-help">
         Starting a new agency workspace?{" "}
         <Link to="/register">Create account</Link>.
@@ -176,9 +255,19 @@ export function LoginPage() {
   );
 }
 export function RegisterPage() {
-  const { user, loading, setUser } = useAuth();
-  const navigate = useNavigate();
+  const { user, loading } = useAuth();
+  const [sent, setSent] = useState(false);
   const invite = sessionStorage.getItem("searchroom.invite");
+  if (sent)
+    return (
+      <AuthLayout title="Check your email">
+        <p>
+          Follow the verification link to activate your account. If you already
+          have an account, sign in or reset your password.
+        </p>
+        <Link to="/login">Back to sign in</Link>
+      </AuthLayout>
+    );
   if (loading) return <Loading />;
   if (user) return <Navigate to="/" replace />;
   return (
@@ -201,7 +290,7 @@ export function RegisterPage() {
           if (password !== String(f.get("confirm_password"))) {
             throw new Error("Passwords do not match.");
           }
-          const result = await api<Tokens & { user: User }>(
+          await api(
             "/auth/register",
             "POST",
             {
@@ -212,10 +301,7 @@ export function RegisterPage() {
             },
             false,
           );
-          saveTokens(result);
-          setUser(result.user);
-          sessionStorage.removeItem("searchroom.invite");
-          navigate("/", { replace: true });
+          setSent(true);
         }}
       >
         <Field label="Your name" name="name" required />
@@ -334,7 +420,9 @@ export function InvitePage() {
             <Form
               submit="Accept invitation"
               onSubmit={async (f) => {
-                const result = await api<Tokens & { user: User }>(
+                const result = await api<
+                  Partial<Account> & { message?: string }
+                >(
                   "/auth/accept-invitation",
                   "POST",
                   {
@@ -348,10 +436,14 @@ export function InvitePage() {
                   },
                   info.existing_user,
                 );
-                saveTokens(result);
-                setUser(result.user);
-                sessionStorage.removeItem("searchroom.invite");
-                navigate("/");
+                if (result.user) {
+                  setUser(result.user);
+                  sessionStorage.removeItem("searchroom.invite");
+                  navigate("/");
+                } else
+                  setError(
+                    "Check your email to verify your address and finish joining.",
+                  );
               }}
             >
               {!info.existing_user && (
@@ -376,6 +468,77 @@ export function InvitePage() {
       >
         Back to sign in
       </Link>
+    </AuthLayout>
+  );
+}
+
+export function AccountPage() {
+  const kind = window.location.pathname.split("/").at(-1);
+  const [token] = useState(
+    () => new URLSearchParams(window.location.hash.slice(1)).get("token") || "",
+  );
+  const [done, setDone] = useState(false);
+  useEffect(() => {
+    window.history.replaceState(null, "", window.location.pathname);
+  }, []);
+  const title =
+    kind === "reset"
+      ? "Choose a new password"
+      : kind === "verify"
+        ? "Verify your email"
+        : kind === "resend"
+          ? "Resend verification"
+          : "Reset your password";
+  return (
+    <AuthLayout title={title}>
+      {done ? (
+        <>
+          <p>
+            {kind === "forgot" || kind === "resend"
+              ? "If eligible, an email will arrive shortly."
+              : "Your account has been updated. You can now sign in."}
+          </p>
+          <Link to="/login">Sign in</Link>
+        </>
+      ) : (
+        <Form
+          submit="Continue"
+          onSubmit={async (f) => {
+            const path =
+              kind === "reset"
+                ? "reset-password"
+                : kind === "verify"
+                  ? "verify-email"
+                  : kind === "resend"
+                    ? "resend-verification"
+                    : "forgot-password";
+            await api(
+              `/auth/${path}`,
+              "POST",
+              kind === "reset"
+                ? { token, password: String(f.get("password")) }
+                : kind === "verify"
+                  ? { token }
+                  : { email: str(f, "email") },
+              false,
+            );
+            setDone(true);
+          }}
+        >
+          {kind === "reset" ? (
+            <Field
+              label="New password (at least 10 characters)"
+              name="password"
+              type="password"
+              required
+            />
+          ) : kind === "verify" ? (
+            <p>Confirm to verify ownership of this email address.</p>
+          ) : (
+            <Field label="Email address" name="email" type="email" required />
+          )}
+        </Form>
+      )}
     </AuthLayout>
   );
 }

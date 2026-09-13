@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import type { FormEvent, ReactNode } from "react";
 import {
   AlertCircle,
@@ -7,7 +7,7 @@ import {
   MessageSquare,
   X,
 } from "lucide-react";
-import { api } from "./api";
+import { api, type Page } from "./api";
 import type { Entry } from "./types";
 
 export function useRemote<T>(path: string) {
@@ -15,26 +15,82 @@ export function useRemote<T>(path: string) {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [revision, setRevision] = useState(0);
+  const [nextCursor, setNextCursor] = useState<number | null>(null);
+  const [moreBusy, setMoreBusy] = useState(false);
+  const activeRequest = useRef<AbortController | null>(null);
   useEffect(() => {
-    let active = true;
+    const controller = new AbortController();
+    activeRequest.current = controller;
+    setMoreBusy(false);
     setLoading(true);
     setError("");
     setData(null);
-    api<T>(path)
+    setNextCursor(null);
+    api<T | Page<unknown>>(path, "GET", undefined, true, controller.signal)
       .then((value) => {
-        if (active) setData(value);
+        if (controller.signal.aborted) return;
+        if (value && typeof value === "object" && "items" in value) {
+          setData(value.items as T);
+          setNextCursor(value.next_cursor);
+        } else setData(value as T);
       })
       .catch((e) => {
-        if (active) setError(e.message);
+        if (!controller.signal.aborted) setError(e.message);
       })
       .finally(() => {
-        if (active) setLoading(false);
+        if (!controller.signal.aborted) setLoading(false);
       });
-    return () => {
-      active = false;
-    };
+    return () => controller.abort();
   }, [path, revision]);
-  return { data, error, loading, reload: () => setRevision((n) => n + 1) };
+  async function loadMore() {
+    if (nextCursor === null || moreBusy) return;
+    setMoreBusy(true);
+    const controller = activeRequest.current;
+    try {
+      const result = await api<Page<unknown>>(
+        `${path}${path.includes("?") ? "&" : "?"}cursor=${nextCursor}`,
+        "GET",
+        undefined,
+        true,
+        controller?.signal,
+      );
+      if (controller?.signal.aborted) return;
+      setData((previous) => [...(previous as unknown[]), ...result.items] as T);
+      setNextCursor(result.next_cursor);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setMoreBusy(false);
+    }
+  }
+  return {
+    data,
+    error,
+    loading,
+    nextCursor,
+    moreBusy,
+    loadMore,
+    reload: () => setRevision((n) => n + 1),
+  };
+}
+export function More({
+  remote,
+}: {
+  remote: {
+    nextCursor: number | null;
+    moreBusy: boolean;
+    loadMore: () => Promise<void>;
+  };
+}) {
+  return remote.nextCursor !== null ? (
+    <button
+      className="button secondary compact"
+      disabled={remote.moreBusy}
+      onClick={remote.loadMore}
+    >
+      {remote.moreBusy ? "Loading…" : "Load more"}
+    </button>
+  ) : null;
 }
 export function ErrorBox({ message }: { message: string }) {
   return message ? (

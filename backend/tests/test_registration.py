@@ -1,68 +1,297 @@
+from datetime import timedelta
+from urllib.parse import urlsplit, parse_qs
+import re
 import pytest
-from sqlalchemy import func, select
-from app.config import get_settings
-from app.models import Agency, AuthSession, User
-from app.security import passwords
+import pyotp
+from sqlalchemy import select
+from app.models import User, MailOutbox, EmailAction, WebSession, now
+from app.mfa import decrypt
+from app.security import digest
 
-URL = '/api/v1/auth/register'
-DATA = {'name': 'Taylor Smith', 'agency_name': 'New Search Agency', 'email': 'taylor@example.com', 'password': ' AStrongPassword! '}
-
-
-def count(db, model):
-    return db.scalar(select(func.count()).select_from(model))
+API = "/api/v1/auth"
 
 
-def test_signup_creates_isolated_agency_and_working_session(client, db, world):
-    # Even matching an existing agency name must not join that agency.
-    response = client.post(URL, json={**DATA, 'agency_name': world['agency'].name, 'email': 'TAYLOR@EXAMPLE.COM'})
-    assert response.status_code == 201, response.text
-    data = response.json()
-    user = db.get(User, data['user']['id'])
-    assert user.agency_id != world['agency'].id
-    assert user.role == 'admin' and user.client_org_id is None
-    assert user.email == 'taylor@example.com'
-    assert user.password_hash != DATA['password']
-    assert passwords.verify(DATA['password'], user.password_hash)
-    assert 'password_hash' not in data['user']
-    headers = {'Authorization': 'Bearer ' + data['access_token']}
-    assert client.get('/api/v1/auth/me', headers=headers).json()['id'] == user.id
-    assert client.get('/api/v1/projects', headers=headers).json() == []
-    assert client.get(f'/api/v1/projects/{world["project"].id}', headers=headers).status_code == 404
-    org = client.post('/api/v1/client-organisations', headers=headers, json={'name': 'First client'})
-    assert org.status_code == 201
-    assert client.post('/api/v1/projects', headers=headers, json={'title': 'First search', 'client_org_id': org.json()['id']}).status_code == 201
-    assert client.post('/api/v1/auth/login', json={'email': DATA['email'], 'password': DATA['password']}).status_code == 200
-    assert client.post('/api/v1/auth/refresh', json={'refresh_token': data['refresh_token']}).status_code == 200
+def mail_token(db):
+    row = db.scalar(select(MailOutbox).order_by(MailOutbox.id.desc()).limit(1))
+    return re.search(r"#token=([^\s]+)", decrypt(row.content)).group(1)
 
 
-@pytest.mark.parametrize('role', ['admin', 'recruiter', 'client'])
-def test_duplicate_email_never_changes_existing_account(client, db, world, role):
-    existing = world[role]
-    before = [count(db, model) for model in (Agency, User, AuthSession)]
-    original = (existing.role, existing.agency_id, existing.password_hash)
-    response = client.post(URL, json={**DATA, 'email': existing.email.upper()})
-    assert response.status_code == 409
-    assert 'sign in' in response.json()['detail']
-    assert [count(db, model) for model in (Agency, User, AuthSession)] == before
-    db.refresh(existing)
-    assert (existing.role, existing.agency_id, existing.password_hash) == original
+def csrf(client):
+    client.headers["X-CSRF-Token"] = client.get(API + "/csrf").json()["csrf_token"]
 
 
-@pytest.mark.parametrize('change', [
-    {'name': '   '}, {'agency_name': '   '}, {'email': 'invalid'},
-    {'password': 'short'}, {'password': 'x' * 129},
-    {'role': 'admin'}, {'agency_id': 1}, {'client_org_id': 1},
-])
-def test_signup_validation_cannot_grant_existing_workspace_access(client, db, change):
-    before = [count(db, model) for model in (Agency, User)]
-    assert client.post(URL, json={**DATA, **change}).status_code == 422
-    assert [count(db, model) for model in (Agency, User)] == before
+def test_registration_email_mfa_and_logout(client, db):
+    payload = {
+        "email": "new@example.com",
+        "name": "New",
+        "agency_name": "New Agency",
+        "password": "StrongPassword!",
+    }
+    response = client.post(API + "/register", json=payload)
+    assert response.status_code == 202 and "access_token" not in response.json()
+    assert db.scalar(select(User).where(User.email == payload["email"])) is None
+    token = mail_token(db)
+    assert client.post(API + "/verify-email", json={"token": token}).status_code == 204
+    assert client.post(API + "/verify-email", json={"token": token}).status_code == 400
+    login = client.post(
+        API + "/login",
+        json={"email": payload["email"], "password": payload["password"]},
+    )
+    assert login.status_code == 200 and login.json()["mfa_required"]
+    assert (
+        "HttpOnly" in login.headers["set-cookie"]
+        and "SameSite=lax" in login.headers["set-cookie"]
+    )
+    assert client.get("/api/v1/projects").status_code == 403
+    csrf(client)
+    secret = client.post(API + "/mfa/setup").json()["secret"]
+    verified = client.post(API + "/mfa/verify", json={"code": pyotp.TOTP(secret).now()})
+    assert verified.status_code == 200, verified.text
+    assert len(verified.json()["recovery_codes"]) == 10
+    assert client.get("/api/v1/projects").status_code == 200
+    csrf(client)
+    assert client.post(API + "/logout").status_code == 204
+    assert client.get(API + "/me").status_code == 401
 
 
-def test_signup_is_rate_limited(client, db, monkeypatch):
-    monkeypatch.setattr(get_settings(), 'auth_rate_limit', 1)
-    assert client.post(URL, json=DATA).status_code == 201
-    before = count(db, Agency)
-    result = client.post(URL, json={**DATA, 'email': 'second@example.com'})
-    assert result.status_code == 429
-    assert count(db, Agency) == before
+def test_csrf_origin_bearer_and_body_limits(client, world, auth):
+    h = auth("client")
+    assert (
+        client.post(
+            "/api/v1/projects/1/messages",
+            headers={**h, "Origin": "https://evil.example"},
+            json={"body": "Bad"},
+        ).status_code
+        == 403
+    )
+    assert (
+        client.post(API + "/logout", headers={**h, "X-CSRF-Token": "bad"}).status_code
+        == 403
+    )
+    assert (
+        client.get(
+            API + "/me", headers={"Cookie": "", "Authorization": "Bearer obsolete"}
+        ).status_code
+        == 401
+    )
+    assert (
+        client.post(API + "/refresh", json={"refresh_token": "obsolete"}).status_code
+        == 404
+    )
+    assert client.post(API + "/login", content="x" * 1048577).status_code == 413
+
+
+def test_password_reset_revokes_sessions_single_use_and_generic(
+    client, world, auth, db
+):
+    h = auth("client")
+    assert (
+        client.post(
+            API + "/forgot-password", json={"email": "fixture-client@example.com"}
+        ).json()
+        == client.post(
+            API + "/forgot-password", json={"email": "unknown@example.com"}
+        ).json()
+    )
+    token = mail_token(db)
+    assert (
+        client.post(
+            API + "/reset-password",
+            json={"token": token, "password": "ReplacementPassword!"},
+        ).status_code
+        == 204
+    )
+    assert client.get(API + "/me", headers=h).status_code == 401
+    assert (
+        client.post(
+            API + "/reset-password",
+            json={"token": token, "password": "ReplacementPassword!"},
+        ).status_code
+        == 400
+    )
+    assert (
+        client.post(
+            API + "/login",
+            json={
+                "email": "fixture-client@example.com",
+                "password": "PasswordForTests!",
+            },
+        ).status_code
+        == 401
+    )
+    assert (
+        client.post(
+            API + "/login",
+            json={
+                "email": "fixture-client@example.com",
+                "password": "ReplacementPassword!",
+            },
+        ).status_code
+        == 200
+    )
+
+
+def test_invitation_verified_before_membership_and_revocation(client, world, auth, db):
+    h = auth("admin")
+    pid = world["project"].id
+    result = client.post(
+        "/api/v1/invitations",
+        headers=h,
+        json={"email": "invited@example.com", "role": "client", "project_id": pid},
+    )
+    assert result.status_code == 201, result.text
+    invite = parse_qs(urlsplit(result.json()["url"]).fragment)["token"][0]
+    assert (
+        client.post(
+            API + "/accept-invitation",
+            json={"token": invite, "name": "Invited", "password": "InvitedPassword!"},
+        ).status_code
+        == 200
+    )
+    assert db.scalar(select(User).where(User.email == "invited@example.com")) is None
+    verification = mail_token(db)
+    assert (
+        client.post(API + "/verify-email", json={"token": verification}).status_code
+        == 204
+    )
+    assert (
+        client.post(API + "/accept-invitation", json={"token": invite}).status_code
+        == 400
+    )
+    login = client.post(
+        API + "/login",
+        json={"email": "invited@example.com", "password": "InvitedPassword!"},
+    )
+    assert login.status_code == 200
+    assert client.get(f"/api/v1/projects/{pid}").status_code == 200
+    assert client.get(f"/api/v1/projects/{world['second'].id}").status_code == 404
+
+
+def test_expired_verification_and_idle_absolute_expiry(client, db, world, auth):
+    client.post(
+        API + "/register",
+        json={
+            "name": "Expired",
+            "agency_name": "Agency",
+            "email": "expired@example.com",
+            "password": "PasswordForTests!",
+        },
+    )
+    token = mail_token(db)
+    action = db.get(EmailAction, digest(token))
+    action.expires_at = now() - timedelta(seconds=1)
+    db.commit()
+    assert client.post(API + "/verify-email", json={"token": token}).status_code == 400
+    h = auth("client")
+    raw = h["Cookie"].split("=", 1)[1]
+    row = db.get(WebSession, digest(raw))
+    absolute = row.expires_at
+    assert client.get(API + "/me", headers=h).status_code == 200
+    db.refresh(row)
+    assert row.expires_at == absolute
+    row.idle_expires_at = now() - timedelta(seconds=1)
+    db.commit()
+    assert client.get(API + "/me", headers=h).status_code == 401
+
+
+def test_existing_account_invite_matching_and_removed_pending_access(
+    client, world, auth
+):
+    h = auth("admin")
+    pid = world["second"].id
+    response = client.post(
+        "/api/v1/invitations",
+        headers=h,
+        json={
+            "email": "fixture-client@example.com",
+            "role": "client",
+            "project_id": pid,
+        },
+    )
+    token = parse_qs(urlsplit(response.json()["url"]).fragment)["token"][0]
+    assert (
+        client.post(
+            API + "/accept-invitation", headers=auth("colleague"), json={"token": token}
+        ).status_code
+        == 403
+    )
+    assert (
+        client.delete(
+            f"/api/v1/projects/{pid}/members/{world['client'].id}", headers=h
+        ).status_code
+        == 204
+    )
+    assert (
+        client.post(
+            API + "/accept-invitation", headers=auth("client"), json={"token": token}
+        ).status_code
+        == 400
+    )
+
+
+def test_production_cookie_flags_and_security_headers(client, db, world, monkeypatch):
+    from app.config import get_settings
+    from app.main import app
+    from fastapi.testclient import TestClient
+
+    settings = get_settings()
+    monkeypatch.setattr(settings, "environment", "production")
+    monkeypatch.setattr(settings, "frontend_url", "https://localhost")
+    with TestClient(app, base_url="https://localhost") as browser:
+        token = browser.get(API + "/csrf").json()["csrf_token"]
+        result = browser.post(
+            API + "/login",
+            headers={"Origin": "https://localhost", "X-CSRF-Token": token},
+            json={
+                "email": "fixture-client@example.com",
+                "password": "PasswordForTests!",
+            },
+        )
+        assert result.status_code == 200, result.text
+        cookie = result.headers["set-cookie"]
+        assert (
+            "__Host-searchroom_session=" in cookie
+            and "Secure" in cookie
+            and "HttpOnly" in cookie
+            and "Domain=" not in cookie
+        )
+        assert result.headers["strict-transport-security"] == "max-age=31536000"
+        assert "frame-ancestors 'none'" in result.headers["content-security-policy"]
+        assert "localhost" not in result.headers["content-security-policy"]
+        assert browser.get(API + "/me").status_code == 200
+
+
+def test_production_config_rejects_development_settings():
+    from app.config import Settings
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        Settings(
+            _env_file=None,
+            environment="production",
+            database_url="postgresql+psycopg://portal:portal@localhost/portal",
+            jwt_secret="a" * 64,
+        )
+
+
+def test_mfa_replay_and_single_use_recovery(client, world, auth, db):
+    h = auth("admin")
+    user = world["admin"]
+    user.mfa_enabled = False
+    db.commit()
+    secret = client.post(API + "/mfa/setup", headers=h).json()["secret"]
+    result = client.post(
+        API + "/mfa/verify", headers=h, json={"code": pyotp.TOTP(secret).now()}
+    )
+    assert result.status_code == 200, result.text
+    csrf(client)
+    assert (
+        client.post(
+            API + "/mfa/verify", json={"code": pyotp.TOTP(secret).now()}
+        ).status_code
+        == 401
+    )
+    code = result.json()["recovery_codes"][0]
+    assert client.post(API + "/mfa/verify", json={"code": code}).status_code == 200
+    csrf(client)
+    assert client.post(API + "/mfa/verify", json={"code": code}).status_code == 401

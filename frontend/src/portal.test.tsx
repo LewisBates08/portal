@@ -6,7 +6,7 @@ import { AuthProvider, LoginPage, Protected } from "./auth";
 import { Dashboard, Layout, ProjectPage } from "./pages";
 import { AdminPage } from "./admin";
 import { TimelineTab } from "./project-tabs";
-import { api, saveTokens } from "./api";
+import { api, authChanged } from "./api";
 import type { Role, User } from "./types";
 vi.mock("./api", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./api")>()),
@@ -35,9 +35,12 @@ function setup(role: Role = "admin", path = "/") {
     email: `${role}@example.com`,
     role,
     agency_id: 1,
+    active: true,
+    email_verified: true,
+    mfa_enabled: true,
     client_org_id: role === "client" ? 1 : null,
   };
-  saveTokens({ access_token: "test-access", refresh_token: "test-refresh" });
+  authChanged();
   return render(
     <MemoryRouter initialEntries={[path]}>
       <AuthProvider>
@@ -70,8 +73,11 @@ beforeEach(() => {
   mockApi.mockImplementation(
     async <T,>(path: string, method = "GET", body?: unknown): Promise<T> => {
       let result: unknown;
-      if (path === "/auth/me") result = current;
+      if (path === "/auth/me")
+        result = { user: current, mfa_required: false, mfa_setup: false };
       else if (path === "/auth/logout") result = undefined;
+      else if (path === "/projects/summary")
+        result = { project_count: 1, unread_count: 2 };
       else if (path === "/projects") result = [project];
       else if (path === "/projects/1") result = project;
       else if (path === "/projects/1/documents") result = [];

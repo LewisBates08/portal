@@ -1,3 +1,4 @@
+import { AccountAdministration } from "./account-admin";
 import { useState } from "react";
 import { Navigate } from "react-router-dom";
 import { Copy, Link2, ShieldCheck, Trash2, Users } from "lucide-react";
@@ -13,6 +14,7 @@ import {
   Loading,
   str,
   useRemote,
+  More,
 } from "./ui";
 import type { ClientOrg, Invitation, Project, User } from "./types";
 
@@ -28,6 +30,7 @@ function AccessPanel({ project, users }: { project: Project; users: User[] }) {
   return (
     <div>
       <ErrorBox message={members.error || error} />
+      <More remote={members} />
       {members.loading ? (
         <Loading />
       ) : (
@@ -126,6 +129,11 @@ function Administration() {
   const project = projects.data?.find((p) => p.id === Number(selected));
   return (
     <>
+      <AccountAdministration />
+      <More remote={projects} />
+      <More remote={orgs} />
+      <More remote={users} />
+      <More remote={invites} />
       <div className="page-heading">
         <div>
           <span className="eyebrow">AGENCY ADMINISTRATION</span>

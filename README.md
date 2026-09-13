@@ -1,59 +1,28 @@
 # Searchroom
 
-A local recruitment client portal built with React, TypeScript, Vite, FastAPI and PostgreSQL. Each project is one search, with a shared brief, agreement terms, candidates, updates, messages and a manual milestone timeline.
+Recruitment client collaboration with React/TypeScript/Vite, FastAPI and PostgreSQL. Agency admins manage searches and access; assigned recruiters maintain the search; invited clients review shared candidates and collaborate. The deployment-readiness implementation is included. Cloud resources have not been provisioned; see [deployment and recovery instructions](docs/DEPLOYMENT.md).
 
-## Try it on this machine
+## Start locally
 
-Dependencies, a project-local PostgreSQL database and fictional demo data have been prepared. From the project folder:
+On this prepared workspace:
 
 ```sh
 .venv/bin/python scripts/dev.py
 ```
 
-Open **http://localhost:5173**. Stop with **Ctrl+C**. The launcher starts the local database if needed, applies migrations and starts both development servers. It stops the servers and any database it started when you exit.
+Open http://localhost:5173. The launcher applies migrations and starts the API and frontend; Ctrl+C stops them. Existing accounts from the JWT prototype now require email verification. Administrators also enrol an authenticator. You must configure a local mail catcher or SMTP server to complete account flows.
 
-| Demo account | Email | Password |
-| --- | --- | --- |
-| Agency admin | admin@example.com | SearchroomDemo2026! |
-| Recruiter | recruiter@example.com | SearchroomDemo2026! |
-| Client | client@example.com | SearchroomDemo2026! |
-
-All demo organisations, people, searches and commercial terms are fictional. The example document link points to example.com; no CV or agreement files are included. Demo seeding is optional and does not run automatically during startup.
-
-## Fresh setup with Docker Compose
-
-Requires Docker with Compose. This configuration was supplied but could not be run in the implementation environment because Docker was unavailable.
-
-1. Copy `.env.example` to `.env`.
-2. Generate a secret with the command below and replace `JWT_SECRET` in `.env`.
-3. Start the application:
+For a fresh Docker setup:
 
 ```sh
-python3 -c "import secrets; print(secrets.token_urlsafe(48))"
+cp .env.example .env
+# Set a random JWT_SECRET in .env before starting.
 docker compose up --build
 ```
 
-Open http://localhost:5173 and choose **Create account** to set up a new agency and its first administrator. Enter your name, agency name, email and matching passwords (10–128 characters). You are signed in automatically to your empty workspace.
+Compose includes PostgreSQL, a one-off migration service, the development servers, an email worker and Mailpit. Read development mail at http://localhost:8025. Do not deploy this development Compose stack publicly; production uses the root Dockerfile. Docker execution must be verified in CI or on a Docker-enabled machine.
 
-The terminal bootstrap command is still available as an alternative:
-
-```sh
-docker compose exec backend python -m app.cli create-admin
-```
-
-Alternatively, add the fictional demo:
-
-```sh
-docker compose exec backend python -m app.cli seed-demo
-```
-
-The frontend is at http://localhost:5173 and interactive API documentation is at http://localhost:8000/docs. Database files persist in the `portal_data` volume. `docker compose down` stops the stack without deleting that volume.
-
-The default development ports are 5173 (frontend), 8000 (API), and 5432 (Docker PostgreSQL). If PostgreSQL already occupies 5432, remove or change the database's host port mapping in `compose.yaml`; the containers still connect to `db:5432` internally.
-
-## Fresh setup without Docker
-
-Requires Python 3.13 or 3.14, Node.js 24, and PostgreSQL. Commands below run from the repository root unless specified otherwise.
+Without Docker, install Python 3.13/3.14, Node 24 and PostgreSQL, then:
 
 ```sh
 python3 -m venv .venv
@@ -62,114 +31,47 @@ npm --prefix frontend ci
 cp .env.example .env
 ```
 
-Create a dedicated PostgreSQL user and database using your normal local database tools. Set `DATABASE_URL` in `.env` to that database using the `postgresql+psycopg://` scheme, and set a randomly generated `JWT_SECRET` of at least 32 characters. Keep `.env` private; it is gitignored.
+Set `DATABASE_URL` and a random `JWT_SECRET` in `.env`. The existing local PostgreSQL cluster uses loopback port 55432; new installations supply their own database. Run a local SMTP catcher on port 1025 and run the email worker in another terminal:
 
 ```sh
-.venv/bin/alembic -c backend/alembic.ini upgrade head
-.venv/bin/python scripts/dev.py
+PYTHONPATH=backend .venv/bin/python -m app.operations mail-loop
 ```
 
-Choose **Create account** on the login page to create your agency, or use `PYTHONPATH=backend .venv/bin/python -m app.cli create-admin` as the terminal alternative.
+The signing secret is generated with `python3 -c "import secrets; print(secrets.token_urlsafe(48))"`. Keep secrets out of source control. Production additionally requires an independent Fernet key, verified database TLS and a verified London SES sender; the production settings validator rejects incomplete settings.
 
-For demo data instead of an empty agency:
+## Accounts and workflows
 
-```sh
-PYTHONPATH=backend .venv/bin/python -m app.cli seed-demo
-```
+- **Agency admin:** select Create account, verify the emailed link, sign in and enrol an authenticator. Save the recovery codes. In Administration set your retention review period, add client organisations, create searches and invite users. Suspend users to revoke all their sessions, or remove only their project membership. Archive/export/review deletion of search data from Administration.
+- **Recruiter:** accept an emailed invitation, choose a password and verify your email. Sign in to edit assigned searches, stage candidates, explicitly share selected profiles, and maintain manual milestones. Stale edits produce a conflict rather than overwriting someone else's changes.
+- **Client:** accept and verify your invitation, or sign in with the matching existing account to accept additional access. View shared candidates, give feedback and contribute updates/comments/messages. Other users in your client organisation do not automatically share your access.
 
-Set `DEMO_PASSWORD` before seeding to override the documented demo password. The seed command refuses to duplicate an existing demo and does not reset existing passwords.
+Forgot-password and verification-resend links are on the login screen. Signup pending actions expire after 24 hours, invitations after seven days and reset links after 30 minutes. The terminal alternative `PYTHONPATH=backend .venv/bin/python -m app.cli create-admin` also queues verification.
 
-On the implementation machine, the isolated PostgreSQL 15 instance lives in `.local/pgdata` and listens only on `127.0.0.1:55432`. It uses local trust authentication for this demo. The launcher recognises that existing cluster; a fresh clone does not contain it. No existing databases were modified.
+Optional fictional demo: `PYTHONPATH=backend .venv/bin/python -m app.cli seed-demo`. New demo accounts are admin@example.com, recruiter@example.com and client@example.com, with password `SearchroomDemo2026!` unless `DEMO_PASSWORD` is set. Existing demo accounts are not reset; use verification/reset if necessary. Demo seeding is disabled in production.
 
-## The three workflows
+## API and security
 
-### Agency administrator
+`/api/v1` exposes the API. Development documentation is at `/docs`; public production API documentation is disabled.
 
-1. Choose **Create account** on the login page to create your own agency workspace, then add a client organisation in **Administration**.
-2. Choose **New search** on the dashboard; enter the client, brief, dates and agreement terms.
-3. In **Administration → Project access**, assign existing recruiters and client users. Client users must belong to the project's client organisation.
-4. To onboard someone new, choose their email, role and project under **Invite someone**. Copy and manually share the generated link. Client invitations require a project; recruiter invitations may grant agency membership before project assignment.
-5. Remove project access or revoke a pending invitation in Administration. Agency admins retain access to every project in their own agency.
-
-### Recruiter
-
-1. Sign in and open an assigned search.
-2. Maintain the overview and external document links.
-3. Add candidates, update their stage, and explicitly choose **Share this candidate with the client**. Changing stage never automatically changes visibility.
-4. Post updates, respond to feedback and messages, and maintain the timeline. Complete or reopen milestones manually; a target such as “Three candidates shortlisted” does not calculate a candidate count.
-
-### Client
-
-1. Open an invitation link. New users set their name and password; existing users sign in with the invited email to accept additional access.
-2. View only explicitly authorised searches and shared candidates, including candidates currently interviewing.
-3. Leave candidate feedback, add updates/comments, and exchange messages.
-4. View agreement terms and the timeline. Candidate stages, agreement terms and milestones are managed by agency staff.
-
-Messages load when opening the tab, after sending, and when **Refresh** is clicked. The unread indicator counts messages from other people that the user has not viewed. Updates, comments, feedback and messages are append-only. External documents are links, not uploads; their access permissions are managed by the external document provider.
-
-## Structure and API
-
-- `backend/app`: database models, request/response schemas, authentication, reusable project access checks, and route modules.
-- `backend/migrations`: versioned Alembic schema migrations; startup applies them without dropping data.
-- `frontend/src`: typed API client, authentication, shared form controls, role-aware screens and styles.
-- `scripts/dev.py`: local development launcher.
-
-The API is versioned under `/api/v1`. FastAPI publishes request and response contracts at `/docs` and `/openapi.json` while the backend is running.
-
-| Resource | Main routes |
-| --- | --- |
-| Authentication | `POST /auth/register`, `/auth/login`, `/auth/refresh`, `/auth/logout`; `GET /auth/me` |
-| Invitation acceptance | `POST /auth/invitation`, `/auth/accept-invitation` |
-| Administration | `/users`, `/client-organisations`, `/invitations`, `/projects/{id}/members` |
-| Search information | `/projects`, `/projects/{id}`, `/projects/{id}/documents` |
-| Candidate pipeline | `/projects/{id}/candidates`, `/projects/{id}/candidates/{candidate_id}/feedback` |
-| Collaboration | `/projects/{id}/updates`, `/projects/{id}/updates/{post_id}/comments`, `/projects/{id}/messages` |
-| Read markers | `PUT /projects/{id}/messages/read` |
-| Timeline | `/projects/{id}/milestones` |
-
-Responses omit password hashes and token-storage records. Nested resource requests check both project access and the resource's actual project, and hidden candidates are excluded from client responses at the API boundary.
-
-## Authentication choices
-
-- Public account creation always creates a new agency and its admin. It never joins an existing agency by name or email domain, accepts a caller-specified role, or upgrades an existing account. Duplicate emails are rejected. Recruiters and clients still join existing workspaces through invitations. Email verification is not included in this local prototype.
-- Argon2 password hashes with pwdlib; JWT signing and verification with PyJWT.
-- Access tokens expire after 15 minutes. Refresh tokens expire after seven days and rotate on use; only a hash of the active refresh token is stored.
-- JWTs refer to a database session. Logout and refresh-token replay revoke that session, including its access tokens. Current project memberships are checked on every request.
-- Tokens are kept in localStorage as agreed. This means an XSS vulnerability could expose them. Content is rendered as plain text, external links are limited to HTTP(S), and script execution is restricted by a Content Security Policy. Development-only inline scripts are authorised by exact hashes rather than enabling arbitrary inline JavaScript. HttpOnly cookies remain a future improvement.
-- Invitation links use a URL fragment; inspection and acceptance send the token in a POST body so it is not placed in normal access-log URLs. Only token hashes are stored. Invitations expire after seven days, are single-use, and cannot change an existing account's role or organisation.
-- Authentication routes use a simple per-IP, in-memory limiter. Run one backend worker for this prototype. A shared limiter would be needed for multiple workers.
+- Authentication uses a random server-managed cookie, not JWT/localStorage. `GET /auth/csrf` establishes a pre-login session and returns the CSRF token. All writes require an exact Origin and `X-CSRF-Token`. `GET /auth/me` returns `{user, mfa_required, mfa_setup}`. Login rotates the session; logout, password reset and suspension revoke it. Idle expiry is 30 minutes; absolute expiry is seven days. Legacy `/auth/refresh` is removed.
+- Production cookies are `__Host-searchroom_session`, Secure, HttpOnly, SameSite=Lax and Path=/ with no Domain. Development uses an insecure-cookie exception only for local HTTP. Passwords use Argon2; TOTP secrets and outbox bodies are encrypted; recovery codes and account/session tokens are hashed.
+- Lists return `{items, next_cursor}` with `cursor` and `limit` parameters; default 50, maximum 100. UI Load more controls retrieve subsequent pages. Comments have their own endpoint; message history loads incrementally.
+- Project/candidate/milestone updates require the current `version`: missing versions return 428 and stale versions return 409. Collaboration POSTs require a UUID `Idempotency-Key`, reused when retrying the same submission; keys last 30 days.
+- Rate limits are PostgreSQL-backed, shared across instances, and bounded by endpoint/account/IP. Pilot quotas default to 100 users, 100 active projects, 1,000 candidates per project and 10,000 collaboration/write requests per agency per day. Operators can configure them after capacity review.
+- Project and nested resource permissions are checked in FastAPI. Clients receive only explicitly shared candidates. Content renders as text and external links must use HTTPS without embedded credentials. External file access must be revoked at its provider separately.
 
 ## Verification
 
-Backend integration tests run against a separate PostgreSQL database whose name ends in `_test`. Tests apply the real migrations, then roll back each test's data.
-
-For this machine's prepared database:
+Use a separate PostgreSQL database ending in `_test`:
 
 ```sh
-TEST_DATABASE_URL=postgresql+psycopg://portal@127.0.0.1:55432/portal_test \
-  .venv/bin/pytest -c backend/pytest.ini -q
-npm --prefix frontend test
+TEST_DATABASE_URL=postgresql+psycopg://portal@127.0.0.1:55432/portal_test .venv/bin/pytest -c backend/pytest.ini -q
 npm --prefix frontend run build
+npm --prefix frontend test
 ```
 
-For Docker with the default development credentials:
+Install test dependencies with `pip install -r backend/requirements-dev.txt`. Browser tests require `npm --prefix frontend exec playwright install`; start the isolated HTTPS fixture server with `TEST_DATABASE_URL=... PYTHONPATH=backend .venv/bin/python scripts/e2e_server.py`, then run `cd frontend && npx playwright test`. Never point test scripts at the normal application database.
 
-```sh
-docker compose exec db createdb -U portal portal_test
-docker compose exec -e TEST_DATABASE_URL=postgresql+psycopg://portal:portal@db:5432/portal_test backend pytest -q
-```
+`scripts/load_check.py` exercises 20 users with a 10,000-message fixture. `scripts/restore_check.py` restores a dump into a disposable test database and verifies counts and schema. CI also checks container serving, dependencies and secrets. See [validation results](docs/VALIDATION.md) for what was actually run and what remains unverified.
 
-Do not point tests at the application database. `createdb` is only needed once.
-
-Automated coverage includes agency signup, duplicate email rejection, signup validation and isolation, onboarding, all three roles, cross-agency/project access, hidden candidate feedback, nested-resource IDs, removed access, invitation expiry/reuse/revocation, role matching, refresh rotation/replay, logout, unread-message watermarks, append-only conversations, stage changes, milestone completion/reopening, URL validation and rate limiting. Frontend component tests exercise role-specific controls, feedback submission, milestones, messages and API error rendering.
-
-**Browser smoke testing remains unverified:** the session did not expose an available browser. Component tests run in jsdom, not a real browser. Before relying on the UI, open each demo account and check:
-
-1. Admin: create a client/search, invite a user, and assign/remove project access.
-2. Recruiter: edit a brief and candidate, share/hide the candidate, post an update and complete/reopen a milestone.
-3. Client: verify the hidden candidate is absent, add feedback and a message, and confirm editing controls are unavailable.
-4. Refresh/reopen each project; confirm persistence and unread state. Try desktop/mobile widths and keyboard navigation.
-
-## Deliberate limits
-
-This is a local learning project. It has no file uploads, transactional email, password-reset workflow, WebSocket chat, automated milestone calculations, electronic signing, audit log, production deployment or infrastructure. Organisations and users use the agreed simple membership model; it does not support multi-agency accounts or fine-grained per-field permissions.
+File uploads, electronic signing, automatic milestone calculations, WebSockets, cross-agency user accounts and granular permission settings remain outside this release.

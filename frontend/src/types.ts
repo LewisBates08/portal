@@ -6,12 +6,12 @@ export interface User {
   role: Role;
   agency_id: number;
   client_org_id: number | null;
-}
-export interface Tokens {
-  access_token: string;
-  refresh_token: string;
+  active: boolean;
+  email_verified: boolean;
+  mfa_enabled: boolean;
 }
 export interface Project {
+  version: number;
   id: number;
   title: string;
   client_org_id: number;
@@ -23,6 +23,7 @@ export interface Project {
   end_date: string | null;
   unread_count: number;
   created_at: string;
+  archived_at?: string | null;
 }
 export interface ClientOrg {
   id: number;
@@ -37,6 +38,7 @@ export const stages = [
   "Rejected",
 ] as const;
 export interface Candidate {
+  version: number;
   id: number;
   name: string;
   current_role: string;
@@ -56,6 +58,7 @@ export interface Entry {
 export interface Post extends Entry {
   attachment_url: string | null;
   comments: Entry[];
+  comment_count?: number;
 }
 export interface DocumentLink {
   id: number;
@@ -63,6 +66,7 @@ export interface DocumentLink {
   url: string;
 }
 export interface Milestone {
+  version: number;
   id: number;
   title: string;
   description: string;
@@ -77,4 +81,10 @@ export interface Invitation {
   expires_at: string;
   used_at: string | null;
   revoked: boolean;
+}
+
+export interface Account {
+  user: User;
+  mfa_required: boolean;
+  mfa_setup: boolean;
 }

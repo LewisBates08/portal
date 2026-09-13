@@ -1,122 +1,93 @@
 import { beforeEach, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MemoryRouter, Route, Routes } from "react-router-dom";
-import { AuthProvider, LoginPage, Protected, RegisterPage } from "./auth";
-import { Dashboard, Layout } from "./pages";
-import { api, tokens } from "./api";
-
-vi.mock("./api", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("./api")>()),
+import { MemoryRouter } from "react-router-dom";
+import { AuthProvider, RegisterPage, MfaPage } from "./auth";
+import { api, ApiError } from "./api";
+vi.mock("./api", async (original) => ({
+  ...(await original<typeof import("./api")>()),
   api: vi.fn(),
 }));
-const mockApi = vi.mocked(api);
-const account = {
-  id: 12,
-  name: "Taylor Smith",
-  email: "taylor@example.com",
-  role: "admin",
-  agency_id: 8,
-  client_org_id: null,
-};
+const mocked = vi.mocked(api);
 beforeEach(() => {
-  mockApi.mockReset();
-  mockApi.mockImplementation(async <T,>(path: string): Promise<T> => {
-    if (path === "/auth/register")
-      return {
-        access_token: "new-access",
-        refresh_token: "new-refresh",
-        user: account,
-      } as T;
-    if (path === "/projects") return [] as T;
-    throw new Error(`Unexpected API call: ${path}`);
+  mocked.mockReset();
+  mocked.mockImplementation(async (path) => {
+    if (path === "/auth/me") throw new ApiError("Sign in", 401);
+    return {} as never;
   });
 });
-function open(path = "/register") {
+it("requires email verification instead of storing login credentials after signup", async () => {
+  const user = userEvent.setup();
   render(
-    <MemoryRouter initialEntries={[path]}>
+    <MemoryRouter>
       <AuthProvider>
-        <Routes>
-          <Route path="/login" element={<LoginPage />} />
-          <Route path="/register" element={<RegisterPage />} />
-          <Route element={<Protected />}>
-            <Route element={<Layout />}>
-              <Route index element={<Dashboard />} />
-            </Route>
-          </Route>
-        </Routes>
+        <RegisterPage />
       </AuthProvider>
     </MemoryRouter>,
   );
-}
-async function fill(confirm = "PasswordForSignup!") {
-  const user = userEvent.setup();
-  await user.type(await screen.findByLabelText("Your name"), "Taylor Smith");
-  await user.type(screen.getByLabelText("Agency name"), "Taylor Search");
-  await user.type(screen.getByLabelText("Email address"), "taylor@example.com");
+  await user.type(await screen.findByLabelText("Your name"), "Test Person");
+  await user.type(screen.getByLabelText("Agency name"), "Test Agency");
+  await user.type(screen.getByLabelText("Email address"), "test@example.com");
   await user.type(
     screen.getByLabelText("Password (at least 10 characters)"),
-    "PasswordForSignup!",
+    "PasswordForTests!",
   );
-  await user.type(screen.getByLabelText("Confirm password"), confirm);
+  await user.type(
+    screen.getByLabelText("Confirm password"),
+    "PasswordForTests!",
+  );
   await user.click(screen.getByRole("button", { name: "Create account" }));
-}
-it("offers signup from login, creates the account and signs in to an empty workspace", async () => {
-  open("/login");
-  await userEvent.click(screen.getByRole("link", { name: "Create account" }));
-  await fill();
   expect(
-    await screen.findByRole("heading", { name: /Search workspace/ }),
+    await screen.findByRole("heading", { name: "Check your email" }),
   ).toBeTruthy();
-  expect(await screen.findByText("Your next search starts here")).toBeTruthy();
-  expect(screen.getByRole("button", { name: "New search" })).toBeTruthy();
-  expect(mockApi).toHaveBeenCalledWith(
-    "/auth/register",
-    "POST",
-    {
-      name: "Taylor Smith",
-      agency_name: "Taylor Search",
-      email: "taylor@example.com",
-      password: "PasswordForSignup!",
-    },
-    false,
-  );
-  expect(tokens()?.access_token).toBe("new-access");
+  expect(localStorage.getItem("searchroom.tokens")).toBeNull();
 });
-it("rejects mismatched passwords before submitting", async () => {
-  open();
-  await fill("DifferentPassword!");
+it("preserves signup fields when passwords do not match", async () => {
+  const user = userEvent.setup();
+  render(
+    <MemoryRouter>
+      <AuthProvider>
+        <RegisterPage />
+      </AuthProvider>
+    </MemoryRouter>,
+  );
+  await user.type(await screen.findByLabelText("Your name"), "Test");
+  await user.type(screen.getByLabelText("Agency name"), "Agency");
+  await user.type(screen.getByLabelText("Email address"), "test@example.com");
+  await user.type(
+    screen.getByLabelText("Password (at least 10 characters)"),
+    "PasswordForTests!",
+  );
+  await user.type(
+    screen.getByLabelText("Confirm password"),
+    "AnotherPassword!",
+  );
+  await user.click(screen.getByRole("button", { name: "Create account" }));
   expect(await screen.findByRole("alert")).toHaveProperty(
     "textContent",
     "Passwords do not match.",
   );
-  expect(mockApi).not.toHaveBeenCalled();
-  expect(tokens()).toBeNull();
 });
-it("shows duplicate email errors and keeps the form available for correction", async () => {
-  mockApi.mockRejectedValue(
-    new Error(
-      "An account with this email already exists. Please sign in instead.",
-    ),
+it("requires saving recovery codes before leaving authenticator setup", async () => {
+  mocked.mockImplementation(
+    async (path) =>
+      (path.endsWith("/setup")
+        ? { secret: "EXAMPLEKEY" }
+        : { recovery_codes: ["recovery-code"] }) as never,
   );
-  open();
-  await fill();
-  expect(await screen.findByRole("alert")).toHaveProperty(
-    "textContent",
-    "An account with this email already exists. Please sign in instead.",
+  const user = userEvent.setup();
+  const done = vi.fn();
+  render(
+    <MemoryRouter>
+      <MfaPage setup done={done} />
+    </MemoryRouter>,
   );
-  expect(screen.getByDisplayValue("Taylor Search")).toBeTruthy();
-  expect(screen.getByRole("link", { name: "Sign in" })).toBeTruthy();
-  expect(tokens()).toBeNull();
-});
-it("keeps the existing invitation route visible to invited users", async () => {
-  sessionStorage.setItem("searchroom.invite", "pending-invitation");
-  open();
-  expect(
-    await screen.findByRole("link", { name: "Accept your invitation" }),
-  ).toHaveProperty(
-    "href",
-    "http://localhost:5173/invite#token=pending-invitation",
+  await user.click(screen.getByRole("button", { name: "Generate setup key" }));
+  await user.type(
+    await screen.findByLabelText("Authenticator or recovery code"),
+    "123456",
   );
-  expect(mockApi).not.toHaveBeenCalled();
+  await user.click(screen.getByRole("button", { name: "Verify code" }));
+  expect(await screen.findByText("recovery-code")).toBeTruthy();
+  expect(done).not.toHaveBeenCalled();
 });

@@ -40,6 +40,7 @@ import {
   optional,
   str,
   useRemote,
+  More,
 } from "./ui";
 import type { ClientOrg, Project } from "./types";
 
@@ -176,6 +177,7 @@ function NewProject({
   return (
     <Editor title="Create a search" close={close}>
       <ErrorBox message={orgs.error} />
+      <More remote={orgs} />
       {orgs.loading ? (
         <Loading />
       ) : !orgs.data?.length ? (
@@ -223,7 +225,10 @@ export function Dashboard() {
   const [creating, setCreating] = useState(false);
   const navigate = useNavigate();
   const list = projects.data || [];
-  const unread = list.reduce((n, p) => n + p.unread_count, 0);
+  const summary = useRemote<{ project_count: number; unread_count: number }>(
+    "/projects/summary",
+  );
+  const unread = summary.data?.unread_count ?? 0;
   return (
     <>
       <div className="page-heading">
@@ -249,7 +254,8 @@ export function Dashboard() {
           saved={(p) => navigate(`/projects/${p.id}`)}
         />
       )}
-      <ErrorBox message={projects.error} />
+      <ErrorBox message={projects.error || summary.error} />
+      <More remote={projects} />
       {projects.loading ? (
         <Loading />
       ) : (
@@ -258,7 +264,11 @@ export function Dashboard() {
             <div className="stats">
               <div className="stat">
                 <BriefcaseBusiness size={21} />
-                <strong>{list.length.toString().padStart(2, "0")}</strong>
+                <strong>
+                  {(summary.data?.project_count ?? 0)
+                    .toString()
+                    .padStart(2, "0")}
+                </strong>
                 <span>Searches in your workspace</span>
               </div>
               <div className="stat">
@@ -355,11 +365,12 @@ export function ProjectPage() {
           All searches
         </Link>
         <ErrorBox message={project.error} />
+        <More remote={project} />
       </>
     );
   if (!project.data) return null;
   const p = project.data;
-  const edit = user?.role !== "client";
+  const edit = user?.role !== "client" && !project.data?.archived_at;
   const base = `/projects/${p.id}`;
   return (
     <>

@@ -25,6 +25,7 @@ import {
   str,
   today,
   useRemote,
+  More,
 } from "./ui";
 import { stages } from "./types";
 import type {
@@ -56,7 +57,10 @@ export function OverviewTab({
           <Form
             onCancel={() => setEditing(false)}
             onSubmit={async (f) => {
-              await api(`/projects/${project.id}`, "PUT", projectData(f));
+              await api(`/projects/${project.id}`, "PUT", {
+                ...projectData(f),
+                version: project.version,
+              });
               setEditing(false);
               reload();
             }}
@@ -203,6 +207,7 @@ function CandidateForm({
         onCancel={close}
         onSubmit={async (f) =>
           save({
+            version: candidate?.version,
             name: str(f, "name"),
             current_role: str(f, "current_role"),
             company: str(f, "company"),
@@ -273,6 +278,7 @@ function FeedbackPanel({
     <div className="feedback-panel">
       <h3>Candidate feedback</h3>
       <ErrorBox message={entries.error} />
+      <More remote={entries} />
       {entries.loading ? (
         <Loading />
       ) : entries.data?.length ? (
@@ -333,6 +339,7 @@ export function CandidatesTab({ base, edit }: { base: string; edit: boolean }) {
         />
       )}
       <ErrorBox message={candidates.error} />
+      <More remote={candidates} />
       {candidates.loading ? (
         <Loading />
       ) : !candidates.data?.length ? (
@@ -447,6 +454,7 @@ export function UpdatesTab({ base }: { base: string }) {
           </div>
         </div>
         <ErrorBox message={posts.error} />
+        <More remote={posts} />
         {posts.loading ? (
           <Loading />
         ) : posts.data?.length ? (
@@ -458,9 +466,10 @@ export function UpdatesTab({ base }: { base: string }) {
                 )}
               </EntryView>
               <div className="comments">
-                {post.comments.map((c) => (
-                  <EntryView key={c.id} entry={c} />
-                ))}
+                <Comments
+                  path={`${base}/updates/${post.id}/comments`}
+                  revision={post.comment_count ?? 0}
+                />
                 <CommentForm
                   path={`${base}/updates/${post.id}/comments`}
                   done={posts.reload}
@@ -514,6 +523,7 @@ export function MessagesTab({
   read: () => void;
 }) {
   const messages = useRemote<Entry[]>(`${base}/messages`);
+  const [showHistory, setShowHistory] = useState(false);
   const { user } = useAuth();
   const [error, setError] = useState("");
   useEffect(() => {
@@ -543,7 +553,19 @@ export function MessagesTab({
           Refresh
         </button>
       </div>
+      <button
+        className="text-button"
+        onClick={() => setShowHistory(!showHistory)}
+      >
+        View earlier messages
+      </button>
+      {showHistory && (
+        <MessageHistory
+          path={`${base}/messages/history?before=${messages.data?.[0]?.id || 0}`}
+        />
+      )}
       <ErrorBox message={messages.error || error} />
+      <More remote={messages} />
       <div className="message-list">
         {messages.loading ? (
           <Loading />
@@ -577,6 +599,7 @@ export function MessagesTab({
 }
 function milestoneData(m: Milestone) {
   return {
+    version: m.version,
     title: m.title,
     description: m.description,
     target_date: m.target_date,
@@ -633,6 +656,7 @@ export function TimelineTab({ base, edit }: { base: string; edit: boolean }) {
                 `${base}/milestones${current ? `/${current.id}` : ""}`,
                 current ? "PUT" : "POST",
                 {
+                  version: current?.version,
                   title: str(f, "title"),
                   description: str(f, "description"),
                   target_date: str(f, "target_date"),
@@ -674,6 +698,7 @@ export function TimelineTab({ base, edit }: { base: string; edit: boolean }) {
         </Editor>
       )}
       <ErrorBox message={milestones.error || error} />
+      <More remote={milestones} />
       {milestones.loading ? (
         <Loading />
       ) : milestones.data?.length ? (
@@ -692,65 +717,70 @@ export function TimelineTab({ base, edit }: { base: string; edit: boolean }) {
             />
           </div>
           <ol className="timeline">
-            {milestones.data.map((m) => {
-              const overdue = !m.completed && m.target_date < today();
-              return (
-                <li
-                  key={m.id}
-                  className={
-                    m.completed ? "complete" : overdue ? "overdue" : ""
-                  }
-                >
-                  <div className="timeline-node">
-                    {m.completed ? <Check size={17} /> : <Circle size={14} />}
-                  </div>
-                  <div className="timeline-body">
-                    <div className="timeline-date">
-                      {dateLabel(m.target_date)}
-                      <span
-                        className={`badge ${m.completed ? "green" : overdue ? "red" : ""}`}
-                      >
-                        {m.completed
-                          ? "Completed"
-                          : overdue
-                            ? "Overdue"
-                            : "Upcoming"}
-                      </span>
+            {[...milestones.data]
+              .sort(
+                (a, b) =>
+                  a.target_date.localeCompare(b.target_date) || a.id - b.id,
+              )
+              .map((m) => {
+                const overdue = !m.completed && m.target_date < today();
+                return (
+                  <li
+                    key={m.id}
+                    className={
+                      m.completed ? "complete" : overdue ? "overdue" : ""
+                    }
+                  >
+                    <div className="timeline-node">
+                      {m.completed ? <Check size={17} /> : <Circle size={14} />}
                     </div>
-                    <h3>{m.title}</h3>
-                    {m.description && (
-                      <p className="preserve muted">{m.description}</p>
-                    )}
-                    {edit && (
-                      <div className="milestone-actions">
-                        <button
-                          className="text-button"
-                          disabled={busy}
-                          onClick={() => change(m)}
+                    <div className="timeline-body">
+                      <div className="timeline-date">
+                        {dateLabel(m.target_date)}
+                        <span
+                          className={`badge ${m.completed ? "green" : overdue ? "red" : ""}`}
                         >
-                          {m.completed ? "Reopen milestone" : "Mark complete"}
-                        </button>
-                        <button
-                          className="icon-button"
-                          aria-label={`Edit ${m.title}`}
-                          onClick={() => setEditing(m)}
-                        >
-                          <Pencil size={16} />
-                        </button>
-                        <button
-                          className="icon-button danger"
-                          disabled={busy}
-                          aria-label={`Delete ${m.title}`}
-                          onClick={() => change(m, true)}
-                        >
-                          <Trash2 size={16} />
-                        </button>
+                          {m.completed
+                            ? "Completed"
+                            : overdue
+                              ? "Overdue"
+                              : "Upcoming"}
+                        </span>
                       </div>
-                    )}
-                  </div>
-                </li>
-              );
-            })}
+                      <h3>{m.title}</h3>
+                      {m.description && (
+                        <p className="preserve muted">{m.description}</p>
+                      )}
+                      {edit && (
+                        <div className="milestone-actions">
+                          <button
+                            className="text-button"
+                            disabled={busy}
+                            onClick={() => change(m)}
+                          >
+                            {m.completed ? "Reopen milestone" : "Mark complete"}
+                          </button>
+                          <button
+                            className="icon-button"
+                            aria-label={`Edit ${m.title}`}
+                            onClick={() => setEditing(m)}
+                          >
+                            <Pencil size={16} />
+                          </button>
+                          <button
+                            className="icon-button danger"
+                            disabled={busy}
+                            aria-label={`Delete ${m.title}`}
+                            onClick={() => change(m, true)}
+                          >
+                            <Trash2 size={16} />
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  </li>
+                );
+              })}
           </ol>
         </section>
       ) : (
@@ -761,5 +791,33 @@ export function TimelineTab({ base, edit }: { base: string; edit: boolean }) {
         </Empty>
       )}
     </>
+  );
+}
+
+function Comments({ path, revision }: { path: string; revision: number }) {
+  const comments = useRemote<Entry[]>(path);
+  useEffect(comments.reload, [revision]);
+  return (
+    <>
+      <ErrorBox message={comments.error} />
+      {comments.data?.map((c) => (
+        <EntryView key={c.id} entry={c} />
+      ))}
+      <More remote={comments} />
+    </>
+  );
+}
+
+function MessageHistory({ path }: { path: string }) {
+  const history = useRemote<Entry[]>(path);
+  return (
+    <section>
+      <h3>Earlier messages</h3>
+      <ErrorBox message={history.error} />
+      {history.data?.map((m) => (
+        <EntryView key={m.id} entry={m} />
+      ))}
+      <More remote={history} />
+    </section>
   );
 }

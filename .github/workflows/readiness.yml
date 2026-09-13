@@ -1,0 +1,60 @@
+name: Readiness checks
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: portal
+          POSTGRES_PASSWORD: ci-test-only
+          POSTGRES_DB: portal_test
+        ports: [5432:5432]
+        options: --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      TEST_DATABASE_URL: postgresql+psycopg://portal:ci-test-only@localhost:5432/portal_test
+      DATABASE_URL: postgresql+psycopg://portal:ci-test-only@localhost:5432/portal_test
+      JWT_SECRET: ci-only-signing-secret-not-for-deployment-12345678
+      ENVIRONMENT: test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: sudo apt-get update && sudo apt-get install -y postgresql-client-17
+      - run: pip install -r backend/requirements.lock pytest httpx pip-audit
+      - run: pytest -c backend/pytest.ini -q
+      - run: pip-audit -r backend/requirements.lock
+      - run: npm ci && npm run build && npm test && npm audit --audit-level=high
+        working-directory: frontend
+      - run: docker build -t searchroom:ci .
+      - run: |
+          docker run -d --name portal --network host -e ENVIRONMENT -e DATABASE_URL -e JWT_SECRET -e STATIC_DIR=/app/static searchroom:ci
+          for attempt in $(seq 1 30); do curl -fsS http://localhost:8000/api/v1/health/ready && break; sleep 2; done
+          curl -fsS http://localhost:8000/api/v1/health/ready
+          curl -fsS http://localhost:8000/login > /tmp/login.html
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8000/api/v1/missing)" = 404
+          docker stop portal
+      - run: npx playwright install --with-deps
+        working-directory: frontend
+      - run: PYTHONPATH=backend python scripts/e2e_server.py > /tmp/e2e.log 2>&1 &
+      - run: npx playwright test
+        working-directory: frontend
+      - run: PYTHONPATH=backend python scripts/load_check.py
+      - run: python scripts/restore_check.py
+      - uses: aquasecurity/trivy-action@0.33.1
+        with:
+          image-ref: searchroom:ci
+          severity: HIGH,CRITICAL
+          exit-code: '1'
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

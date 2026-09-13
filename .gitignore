@@ -10,3 +10,6 @@ dist/
 .DS_Store
 frontend/playwright-report/
 frontend/test-results/
+
+frontend/test-results/
+frontend/playwright-report/
