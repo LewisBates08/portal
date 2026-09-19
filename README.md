@@ -47,7 +47,7 @@ The signing secret is generated with `python3 -c "import secrets; print(secrets.
 
 Forgot-password and verification-resend links are on the login screen. Signup pending actions expire after 24 hours, invitations after seven days and reset links after 30 minutes. The terminal alternative `PYTHONPATH=backend .venv/bin/python -m app.cli create-admin` also queues verification.
 
-Optional fictional demo: `PYTHONPATH=backend .venv/bin/python -m app.cli seed-demo`. New demo accounts are admin@example.com, recruiter@example.com and client@example.com, with password `SearchroomDemo2026!` unless `DEMO_PASSWORD` is set. Existing demo accounts are not reset; use verification/reset if necessary. Demo seeding is disabled in production.
+The production backend has no demo seeder or default login. Create your own verified account. Fictional browser fixtures are isolated under `scripts/`, require an explicitly named `_test` database and a supplied random `E2E_PASSWORD`, and are excluded from the production image. Production startup refuses a database containing the legacy demo login addresses.
 
 ## API and security
 
@@ -70,8 +70,8 @@ npm --prefix frontend run build
 npm --prefix frontend test
 ```
 
-Install test dependencies with `pip install -r backend/requirements-dev.txt`. Browser tests require `npm --prefix frontend exec playwright install`; start the isolated HTTPS fixture server with `TEST_DATABASE_URL=... PYTHONPATH=backend .venv/bin/python scripts/e2e_server.py`, then run `cd frontend && npx playwright test`. Never point test scripts at the normal application database.
+Install test dependencies with `pip install -r backend/requirements-dev.txt`. Browser tests require `npm --prefix frontend exec playwright install`; set the same random `E2E_PASSWORD` in the test-server and Playwright terminals, then start the isolated HTTPS fixture server with `TEST_DATABASE_URL=... PYTHONPATH=backend .venv/bin/python scripts/e2e_server.py`, then run `cd frontend && npx playwright test`. Never point test scripts at the normal application database.
 
-`scripts/load_check.py` exercises 20 users with a 10,000-message fixture. `scripts/restore_check.py` restores a dump into a disposable test database and verifies counts and schema. CI also checks container serving, dependencies and secrets. See [validation results](docs/VALIDATION.md) for what was actually run and what remains unverified.
+`scripts/load_check.py` exercises 20 users with a 10,000-message fixture. `scripts/restore_check.py` restores a dump into a disposable test database and verifies counts and schema. CI also checks container serving, dependencies and secrets. See [deployment checkpoint results](docs/DEPLOYMENT_CHECKPOINTS.md) for what was actually run and what remains unverified.
 
 File uploads, electronic signing, automatic milestone calculations, WebSockets, cross-agency user accounts and granular permission settings remain outside this release.

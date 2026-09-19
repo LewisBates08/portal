@@ -48,14 +48,14 @@ Opaque PostgreSQL-backed sessions replace JWT/localStorage. Production cookies a
 
 Production serves compiled React and FastAPI from one HTTPS origin in a non-root container. Managed PostgreSQL and the app target London/private networking. Alembic runs as a separate locked pre-deployment job. Shared rate limiting, bounded connections, pagination, record versions, submission deduplication and transactional access changes support a small pilot.
 
-Administration includes account suspension, retention settings, project archiving, export and confirmed deletion. Structured audit events, cleanup/email/backup jobs, CI and operational runbooks are included. Cloud resources, secret values, verified email delivery and platform recovery/monitoring must still be configured and validated; see `docs/DEPLOYMENT.md` and `docs/VALIDATION.md`.
+Administration includes account suspension, retention settings, project archiving, export and confirmed deletion. Structured audit events, cleanup/email/backup jobs, CI and operational runbooks are included. Cloud resources, secret values, verified email delivery and platform recovery/monitoring must still be configured and validated; see `docs/DEPLOYMENT.md` and `docs/DEPLOYMENT_CHECKPOINTS.md`.
 
 ## Technical structure
 
 - **Frontend:** React, TypeScript, Vite, React Router, a shared typed fetch client and responsive CSS.
 - **Backend:** FastAPI, Pydantic request/response contracts, pwdlib, encrypted TOTP secrets and cookie sessions, synchronous SQLAlchemy with psycopg.
 - **Database:** PostgreSQL stores agencies, client organisations, users, memberships, projects, invitations, sessions, candidates/feedback, document links, posts/comments, messages/read markers and milestones. Alembic versions the schema.
-- **Local development:** Docker Compose configuration, environment-based secrets, an interactive admin bootstrap command, optional fictional demo data and a local launcher.
+- **Local development:** Docker Compose configuration, environment-based secrets, an interactive admin bootstrap command, isolated test fixtures and a local launcher.
 - **Verification:** PostgreSQL integration tests and frontend component tests plus TypeScript/build checks. Includes three-browser HTTPS smoke tests, concurrent PostgreSQL tests and isolated load/restore scripts. Docker verification runs in CI because Docker is unavailable locally.
 
 ## Acceptance criteria

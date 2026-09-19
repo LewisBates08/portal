@@ -12,3 +12,8 @@
 **/playwright-report
 .codex
 .agents
+
+**/.env
+**/.env.*
+**/*.env
+**/*.env.*

@@ -234,6 +234,10 @@ def test_production_cookie_flags_and_security_headers(client, db, world, monkeyp
     from app.main import app
     from fastapi.testclient import TestClient
 
+    import app.main as main
+
+    # Database launch gating is covered separately against an isolated schema.
+    monkeypatch.setattr(main, "ensure_production_database", lambda: None)
     settings = get_settings()
     monkeypatch.setattr(settings, "environment", "production")
     monkeypatch.setattr(settings, "frontend_url", "https://localhost")

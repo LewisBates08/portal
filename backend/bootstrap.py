@@ -4,6 +4,15 @@ import os
 import sys
 from pathlib import Path
 
+if os.environ.get("ENVIRONMENT") == "production":
+    if "--reload" in sys.argv or os.environ.get("UVICORN_RELOAD", "").lower() in (
+        "true",
+        "1",
+        "yes",
+    ):
+        raise SystemExit("Development reload is disabled in production.")
+    os.environ["UVICORN_LOG_LEVEL"] = "warning"
+
 cert = os.environ.get("DATABASE_CA_CERT")
 if cert:
     Path("/tmp/postgres-ca.crt").write_text(cert)

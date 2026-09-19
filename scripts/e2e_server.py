@@ -18,14 +18,16 @@ os.environ.update(
     STATIC_DIR=str(root / "frontend/dist"),
     AUTH_RATE_LIMIT="10000",
 )
-os.environ.setdefault("JWT_SECRET", "e2e-only-not-a-production-signing-secret-12345678")
+import secrets
+
+os.environ.setdefault("JWT_SECRET", secrets.token_urlsafe(48))
 sys.path.insert(0, str(root / "backend"))
 from app.operations import migrate
 
 migrate()
-from app.cli import seed_demo
+from browser_fixture import seed_browser_fixture
 
-seed_demo()
+seed_browser_fixture(os.environ["E2E_PASSWORD"])
 from app.database import SessionLocal
 from app.models import User
 from app.security import hash_password
@@ -41,7 +43,7 @@ with SessionLocal.begin() as db:
     ):
         user.active = True
         user.email_verified = True
-        user.password_hash = hash_password("E2E-Only-Password!")
+        user.password_hash = hash_password(os.environ["E2E_PASSWORD"])
     admin = db.scalar(select(User).where(User.email == "admin@example.com"))
     admin.mfa_enabled = False
     admin.mfa_secret = None
