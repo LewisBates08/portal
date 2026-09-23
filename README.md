@@ -10,7 +10,7 @@ On this prepared workspace:
 .venv/bin/python scripts/dev.py
 ```
 
-Open http://localhost:5173. The launcher applies migrations and starts the API and frontend; Ctrl+C stops them. Existing accounts from the JWT prototype now require email verification. Administrators also enrol an authenticator. You must configure a local mail catcher or SMTP server to complete account flows.
+Open http://localhost:5173. The launcher applies migrations and starts the API, frontend and email worker; Ctrl+C stops them. With the default local SMTP settings, it also starts Mailpit (install on macOS with `brew install mailpit`). Open http://localhost:8025 to read verification and password-reset emails and follow their links. These development emails stay on your computer and do not reach your real inbox. Existing accounts from the JWT prototype require email verification. Administrators also enrol an authenticator.
 
 For a fresh Docker setup:
 
@@ -31,7 +31,7 @@ npm --prefix frontend ci
 cp .env.example .env
 ```
 
-Set `DATABASE_URL` and a random `JWT_SECRET` in `.env`. The existing local PostgreSQL cluster uses loopback port 55432; new installations supply their own database. Run a local SMTP catcher on port 1025 and run the email worker in another terminal:
+Set `DATABASE_URL` and a random `JWT_SECRET` in `.env`. The existing local PostgreSQL cluster uses loopback port 55432; new installations supply their own database. The launcher manages Mailpit and the email worker automatically. If starting the API manually, also start your SMTP service and run the worker in another terminal:
 
 ```sh
 PYTHONPATH=backend .venv/bin/python -m app.operations mail-loop

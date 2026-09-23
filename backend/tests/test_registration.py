@@ -20,6 +20,43 @@ def csrf(client):
     client.headers["X-CSRF-Token"] = client.get(API + "/csrf").json()["csrf_token"]
 
 
+def test_resend_pending_signup(client, db):
+    email = "resend-pending@example.com"
+    assert (
+        client.post(
+            API + "/register",
+            json={
+                "email": email,
+                "name": "Pending",
+                "agency_name": "Pending Agency",
+                "password": "StrongPassword!",
+            },
+        ).status_code
+        == 202
+    )
+    original = mail_token(db)
+    assert db.scalar(select(User).where(User.email == email)) is None
+    response = client.post(API + "/resend-verification", json={"email": email})
+    assert response.status_code == 202
+    replacement = mail_token(db)
+    assert replacement != original
+    assert (
+        client.post(API + "/verify-email", json={"token": replacement}).status_code
+        == 204
+    )
+    assert db.scalar(select(User).where(User.email == email)).email_verified
+    assert (
+        client.post(API + "/verify-email", json={"token": original}).status_code == 400
+    )
+    count = len(db.scalars(select(MailOutbox)).all())
+    for address in [email, "unknown-resend@example.com"]:
+        assert (
+            client.post(API + "/resend-verification", json={"email": address}).json()
+            == response.json()
+        )
+    assert len(db.scalars(select(MailOutbox)).all()) == count
+
+
 def test_registration_email_mfa_and_logout(client, db):
     payload = {
         "email": "new@example.com",

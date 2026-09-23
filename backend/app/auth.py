@@ -158,11 +158,25 @@ def forgot(data: EmailRequest, request: Request, db: Session = Depends(get_db)):
 @router.post("/resend-verification", status_code=202)
 def resend(data: EmailRequest, request: Request, db: Session = Depends(get_db)):
     auth_limit(request, db, data.email)
+    email_lock(db, data.email)
     user = db.scalar(
         select(User).where(User.email == data.email, User.active.is_(True))
     )
     if user and not user.email_verified:
         queue_action(db, data.email, "verify", {"user_id": user.id}, 1440)
+    elif not db.scalar(select(User.id).where(User.email == data.email)):
+        pending = db.scalar(
+            select(EmailAction)
+            .where(
+                EmailAction.email == data.email,
+                EmailAction.kind == "verify",
+                EmailAction.expires_at > now(),
+            )
+            .order_by(EmailAction.expires_at.desc())
+            .limit(1)
+        )
+        if pending:
+            queue_action(db, data.email, "verify", pending.payload, 1440)
     db.commit()
     return GENERIC
 
