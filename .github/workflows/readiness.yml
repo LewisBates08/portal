@@ -55,7 +55,7 @@ jobs:
         working-directory: frontend
       - run: PYTHONPATH=backend python scripts/load_check.py
       - run: python scripts/restore_check.py
-      - uses: aquasecurity/trivy-action@0.33.1
+      - uses: aquasecurity/trivy-action@0.28.0
         with:
           image-ref: searchroom:ci
           severity: HIGH,CRITICAL
