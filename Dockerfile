@@ -14,7 +14,7 @@ RUN python -m venv --without-pip /opt/venv \
     && python -m pip --python /opt/venv/bin/python check
 
 FROM dependencies AS test-tools
-RUN python -m pip install --no-cache-dir --target /test-tools pytest httpx
+RUN python -m pip install --no-cache-dir --target /test-tools -c requirements.lock pytest httpx
 
 FROM python:3.13-alpine3.23@sha256:6438599575cca0d1df94aeee0d2ae088d4d8846eab554b2ee7784a3a6df0d516 AS application
 ENV ENVIRONMENT=production PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 STATIC_DIR=/app/static PATH=/opt/venv/bin:$PATH
@@ -29,7 +29,7 @@ COPY backend/ ./
 COPY --from=frontend /build/dist ./static
 USER 10001
 EXPOSE 8000
-ENTRYPOINT ["python", "bootstrap.py"]
+ENTRYPOINT ["python", "/app/bootstrap.py"]
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1", "--limit-concurrency", "40", "--timeout-keep-alive", "5", "--no-access-log", "--log-level", "warning"]
 
 # Test tooling is never part of either published image.

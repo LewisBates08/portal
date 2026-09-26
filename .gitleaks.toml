@@ -1,0 +1,7 @@
+[extend]
+useDefault = true
+
+[allowlist]
+description = "One public, generated Fernet compatibility fixture; never used by any account or environment"
+regexTarget = "secret"
+regexes = ['''^qgbMsntKVeNMYMKIbMKeCQZwMzyztrTIPDDULXyt5Q8=$''']
