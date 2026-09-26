@@ -75,3 +75,5 @@ Install test dependencies with `pip install -r backend/requirements-dev.txt`. Br
 `scripts/load_check.py` exercises 20 users with a 10,000-message fixture. `scripts/restore_check.py` restores a dump into a disposable test database and verifies counts and schema. CI also checks container serving, dependencies and secrets. See [deployment checkpoint results](docs/DEPLOYMENT_CHECKPOINTS.md) for what was actually run and what remains unverified.
 
 File uploads, electronic signing, automatic milestone calculations, WebSockets, cross-agency user accounts and granular permission settings remain outside this release.
+
+Container targets, scan evidence and immutable image publishing are described in [the container release guide](docs/CONTAINER_RELEASE.md). Backup jobs now require the `operations` image target.

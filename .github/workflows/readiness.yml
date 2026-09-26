@@ -5,6 +5,8 @@ permissions:
 jobs:
   verify:
     runs-on: ubuntu-24.04
+    outputs:
+      images-ready: ${{ steps.images.outputs.ready }}
     services:
       postgres:
         image: postgres:17
@@ -13,7 +15,7 @@ jobs:
           POSTGRES_PASSWORD: ci-test-only
           POSTGRES_DB: portal_test
         ports: [5432:5432]
-        options: --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
+        options: --health-cmd "pg_isready -U portal -d portal_test" --health-interval 5s --health-timeout 5s --health-retries 10
     env:
       TEST_DATABASE_URL: postgresql+psycopg://portal:ci-test-only@localhost:5432/portal_test
       DATABASE_URL: postgresql+psycopg://portal:ci-test-only@localhost:5432/portal_test
@@ -53,7 +55,34 @@ jobs:
       - run: pip-audit -r backend/requirements.lock
       - run: npm ci && npm run build && npm test && npm audit --audit-level=high
         working-directory: frontend
-      - run: docker build -t searchroom:ci .
+      - name: Build runtime, operations and test images
+        run: |
+          docker build --pull --target runtime -t searchroom:ci .
+          docker build --target operations -t searchroom:operations .
+          docker build --target test -t searchroom:test .
+          mkdir -p image-artifacts
+          docker image inspect searchroom:ci searchroom:operations > image-artifacts/images.json
+          docker save searchroom:ci searchroom:operations | gzip > image-artifacts/images.tar.gz
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tested-images
+          path: image-artifacts/
+          retention-days: 7
+      - id: images
+        run: echo "ready=true" >> "$GITHUB_OUTPUT"
+      - name: Test backend inside Alpine
+        run: |
+          docker run --rm --network host -e ENVIRONMENT -e TEST_DATABASE_URL -e DATABASE_URL -e JWT_SECRET -e STATIC_DIR= \
+            -v "$PWD/backend:/workspace/backend:ro" -w /workspace searchroom:test \
+            python -m pytest -c backend/pytest.ini -q -p no:cacheprovider
+      - name: Check runtime contents
+        run: |
+          for image in searchroom:ci searchroom:operations; do
+            docker run --rm -e ENVIRONMENT "$image" python -c 'import os, shutil, importlib.util; assert os.getuid() == 10001; assert all(shutil.which(x) is None for x in ("gcc", "cargo", "pip")); assert all(importlib.util.find_spec(x) is None for x in ("pip", "setuptools", "wheel")); import psycopg, uvloop, cryptography, argon2'
+          done
+          docker run --rm -e ENVIRONMENT searchroom:ci python -c 'import shutil; assert shutil.which("pg_dump") is None'
+          docker run --rm -e ENVIRONMENT searchroom:operations pg_dump --version | grep -E 'PostgreSQL\) 17\.'
+          docker run --rm -e ENVIRONMENT searchroom:operations pg_restore --version | grep -E 'PostgreSQL\) 17\.'
       - run: |
           docker run -d --name portal --network host -e ENVIRONMENT -e DATABASE_URL -e JWT_SECRET -e STATIC_DIR=/app/static searchroom:ci
           for attempt in $(seq 1 30); do curl -fsS http://localhost:8000/api/v1/health/ready && break; sleep 2; done
@@ -63,17 +92,104 @@ jobs:
           docker stop portal
       - run: npx playwright install --with-deps
         working-directory: frontend
-      - run: PYTHONPATH=backend python scripts/e2e_server.py > /tmp/e2e.log 2>&1 &
+      - name: Start final image for HTTPS browser checks
+        run: |
+          PYTHONPATH=backend python scripts/e2e_server.py --prepare-only
+          mkdir -p /tmp/portal-tls
+          openssl req -x509 -newkey rsa:2048 -nodes -keyout /tmp/portal-tls/key.pem -out /tmp/portal-tls/cert.pem -days 1 -subj /CN=localhost
+          chmod 644 /tmp/portal-tls/*.pem
+          docker run -d --name portal-e2e --network host -e ENVIRONMENT -e DATABASE_URL -e JWT_SECRET \
+            -e FRONTEND_URL=https://localhost:8443 -e AUTH_RATE_LIMIT=10000 \
+            -v /tmp/portal-tls:/tls:ro searchroom:ci \
+            uvicorn app.main:app --host 0.0.0.0 --port 8443 --ssl-keyfile /tls/key.pem --ssl-certfile /tls/cert.pem --no-access-log
+          for attempt in $(seq 1 30); do curl -kfsS https://localhost:8443/api/v1/health/ready && break; sleep 2; done
+          curl -kfsS https://localhost:8443/api/v1/health/ready
       - run: npx playwright test
         working-directory: frontend
       - run: PYTHONPATH=backend python scripts/load_check.py
-      - run: python scripts/restore_check.py
+      - name: Restore using operations image tools
+        run: |
+          docker run --rm --network host -e ENVIRONMENT -e TEST_DATABASE_URL -e DATABASE_URL -e JWT_SECRET \
+            -v "$PWD/scripts/restore_check.py:/app/restore_check.py:ro" searchroom:operations python restore_check.py
+      - name: Container logs and cleanup
+        if: always()
+        run: |
+          docker logs portal-e2e 2>&1 || true
+          docker rm -f portal portal-e2e 2>/dev/null || true
+
+  image-security:
+    needs: verify
+    if: ${{ !cancelled() && needs.verify.outputs.images-ready == 'true' }}
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [ci, operations]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: tested-images
+          path: image-artifacts
+      - run: gunzip -c image-artifacts/images.tar.gz | docker load
       - name: Scan image with Trivy
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
-          image-ref: searchroom:ci
+          image-ref: searchroom:${{ matrix.image }}
           severity: HIGH,CRITICAL
           exit-code: '1'
+          format: json
+          output: trivy-${{ matrix.image }}.json
+          scanners: vuln
+          list-all-pkgs: 'true'
+      - name: Save scan evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-${{ matrix.image }}
+          path: |
+            trivy-${{ matrix.image }}.json
+            image-artifacts/images.json
+          retention-days: 30
+
+  secrets:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: gitleaks/gitleaks-action@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  publish:
+    needs: [verify, image-security, secrets]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: tested-images
+          path: image-artifacts
+      - name: Publish the tested images without rebuilding
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gunzip -c image-artifacts/images.tar.gz | docker load
+          registry="ghcr.io/${GITHUB_REPOSITORY,,}"
+          echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          for target in ci operations; do
+            tag="$registry:$GITHUB_SHA-$target"
+            docker tag "searchroom:$target" "$tag"
+            docker push "$tag"
+            docker image inspect "$tag" --format '{{json .RepoDigests}}' >> release-digests.txt
+          done
+          docker logout ghcr.io
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-digests
+          path: release-digests.txt
+          retention-days: 90

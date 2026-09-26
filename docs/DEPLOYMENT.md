@@ -24,6 +24,10 @@ Create a private S3 bucket in London (`eu-west-2`) with public access blocked, d
 
 Verify native database backup, bucket, encryption-key and retained-log locations. Record provider agreements, subprocessors and international support/processing before real data. UK hosting/storage is the agreed constraint; region selection alone does not establish all processing residency.
 
+## Container image selection
+
+Use the `runtime` image for web, email, migrations and cleanup; use the separate `operations` image for database backups and restore tools. Both must pass the image security gate. The older App Platform template requires its backup image reference to be set to the operations digest. See [CONTAINER_RELEASE.md](CONTAINER_RELEASE.md) for build targets and release evidence.
+
 ## Release and migration
 
 The first readiness migration is an authentication cutover: existing JWT sessions are revoked, existing users must verify their addresses, and admins must enrol MFA. Existing agencies must set retention settings. Stop the legacy app before this migration and deploy the new frontend/backend together. No automatic schema downgrade is supplied because reactivating legacy authentication would reintroduce the old risks.
