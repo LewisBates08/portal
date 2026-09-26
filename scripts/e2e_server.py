@@ -49,6 +49,10 @@ with SessionLocal.begin() as db:
     admin.mfa_secret = None
     admin.mfa_last_step = 0
     admin.recovery_hashes = []
+if "--prepare-only" in sys.argv:
+    print("Browser fixtures prepared; start the runtime container separately.")
+    raise SystemExit(0)
+
 with tempfile.TemporaryDirectory() as folder:
     key, cert = str(Path(folder) / "key.pem"), str(Path(folder) / "cert.pem")
     subprocess.run(

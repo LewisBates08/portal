@@ -65,7 +65,11 @@ jobs:
     schedule:
       cron: '0 2 * * *'
       time_zone: UTC
-    image: *image
+    image:
+      registry_type: GHCR
+      registry: YOUR_GITHUB_ORG
+      repository: searchroom
+      digest: sha256:REPLACE_WITH_TESTED_OPERATIONS_IMAGE_DIGEST
     instance_count: 1
     instance_size_slug: apps-s-1vcpu-1gb
     run_command: python bootstrap.py python -m app.operations backup
