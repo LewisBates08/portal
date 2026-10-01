@@ -7,7 +7,6 @@ from fastapi import FastAPI, Request, Depends, HTTPException
 from fastapi.exceptions import RequestValidationError
 from contextlib import asynccontextmanager
 from fastapi.responses import JSONResponse, FileResponse
-from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from sqlalchemy import text, select
 from .database import SessionLocal
 from .models import User
@@ -16,6 +15,7 @@ from . import admin, auth, projects
 from .config import get_settings
 from .database import get_db
 from .security import require_csrf
+from .hosts import SearchroomTrustedHostMiddleware
 
 settings = get_settings()
 if settings.production:
@@ -60,7 +60,9 @@ app = FastAPI(
     openapi_url=None if settings.production else "/openapi.json",
 )
 app.add_middleware(
-    TrustedHostMiddleware, allowed_hosts=settings.trusted_hosts.split(",")
+    SearchroomTrustedHostMiddleware,
+    allowed_hosts=settings.trusted_hosts.split(","),
+    railway=bool(settings.railway_service_id),
 )
 # Same-origin frontend/API: intentionally no CORS middleware or cross-origin grants.
 # Cookie writes additionally require the exact configured HTTPS Origin and CSRF token.

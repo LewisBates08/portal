@@ -82,6 +82,19 @@ def test_production_config_and_repr_hide_secrets():
     assert "private-secret-too-short" not in str(failure.value)
 
 
+def test_mail_can_be_explicitly_disabled_without_disabling_production_security():
+    settings = valid_settings(
+        mail_enabled=False, smtp_host="localhost", smtp_user="", smtp_password="",
+        mail_from="Searchroom <no-reply@localhost>",
+    )
+    assert settings.production
+    assert settings.cookie_name == "__Host-searchroom_session"
+    with pytest.raises(ValidationError):
+        valid_settings(smtp_user="", smtp_password="")
+    with pytest.raises(ValidationError):
+        valid_settings(mail_enabled=False, frontend_url="http://localhost:5173")
+
+
 def test_validation_does_not_echo_credentials(client):
     response = client.post(
         "/api/v1/auth/login",

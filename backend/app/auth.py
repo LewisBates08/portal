@@ -29,7 +29,7 @@ from .security import (
 )
 from .config import get_settings
 from .serializers import user_view
-from .mail import queue_action
+from .mail import queue_action, require_mail
 from .mfa import encrypt, validate_code
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
@@ -72,6 +72,7 @@ def csrf(request: Request, response: Response, db: Session = Depends(get_db)):
 
 @router.post("/register", status_code=202)
 def register(data: Register, request: Request, db: Session = Depends(get_db)):
+    require_mail()
     auth_limit(request, db, data.email)
     # Do the password work for both existing and new addresses.
     encoded = hash_password(data.password)
@@ -141,6 +142,7 @@ def logout(request: Request, response: Response, db: Session = Depends(get_db)):
 
 @router.post("/forgot-password", status_code=202)
 def forgot(data: EmailRequest, request: Request, db: Session = Depends(get_db)):
+    require_mail()
     auth_limit(request, db, data.email)
     user = db.scalar(
         select(User).where(
@@ -157,6 +159,7 @@ def forgot(data: EmailRequest, request: Request, db: Session = Depends(get_db)):
 
 @router.post("/resend-verification", status_code=202)
 def resend(data: EmailRequest, request: Request, db: Session = Depends(get_db)):
+    require_mail()
     auth_limit(request, db, data.email)
     email_lock(db, data.email)
     user = db.scalar(

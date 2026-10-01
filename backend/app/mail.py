@@ -2,13 +2,23 @@
 
 import secrets
 from datetime import timedelta
+from fastapi import HTTPException
 from .config import get_settings
 from .mfa import encrypt
 from .models import EmailAction, MailOutbox, now
 from .security import digest
 
 
+def require_mail():
+    if not get_settings().mail_enabled:
+        raise HTTPException(
+            503,
+            "Account email is not configured yet. Please try again once setup is complete.",
+        )
+
+
 def queue_action(db, email, kind, payload, minutes):
+    require_mail()
     token = secrets.token_urlsafe(32)
     db.add(
         EmailAction(
@@ -31,6 +41,7 @@ def queue_action(db, email, kind, payload, minutes):
 
 
 def queue_invitation(db, email, link):
+    require_mail()
     db.add(
         MailOutbox(
             recipient=email,

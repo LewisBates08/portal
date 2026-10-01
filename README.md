@@ -4,6 +4,10 @@ Recruitment client collaboration with React/TypeScript/Vite, FastAPI and Postgre
 
 ## Start locally
 
+For Railway, see the [Railway deployment setup](docs/RAILWAY.md). The root
+`railway.json` configures the production image, migrations and readiness check;
+the account's database and email settings must be supplied before deployment.
+
 On this prepared workspace:
 
 ```sh
