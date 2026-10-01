@@ -5,9 +5,12 @@ The site can start with production security enabled, but signup, verification
 resend and password reset return 503 until email is configured. Invitations cannot
 be queued either. No account verification or MFA requirements are bypassed.
 
-Deploy the repository root using `railway.json`. It builds the existing production
-Dockerfile, runs the locked Alembic migration before release, listens on Railway's
-`PORT`, and checks `/api/v1/health/ready` before routing traffic. Railway supplies
+Deploy the repository root using the service settings recorded in
+`deploy/railway-settings.json`. This file is a non-secret configuration snapshot,
+not an automatically evaluated Railway file. The settings were applied using the
+Railway API: build the production Dockerfile, run the locked Alembic migration
+before release, listen on Railway's `PORT`, and check `/api/v1/health/ready` before
+routing traffic. Railway supplies
 `RAILWAY_SERVICE_ID`; this enables its probe hostname only for GET requests to the
 readiness endpoint. Normal application routes still require `TRUSTED_HOSTS`.
 
@@ -26,7 +29,7 @@ readiness endpoint. Normal application routes still require `TRUSTED_HOSTS`.
   `SMTP_PORT=587`, `SMTP_USER`, `SMTP_PASSWORD`, and a verified `MAIL_FROM`.
   Confirm the selected Railway plan allows outbound SMTP before release.
 
-The database service uses `/deploy/railway-db/railway.json`, extends Railway's
+The database service sets `RAILWAY_DOCKERFILE_PATH=deploy/railway-db/Dockerfile`, extends Railway's
 PostgreSQL 17 image, and retains its persistent volume and startup wrapper. On a
 fresh volume it creates `searchroom`, owned by the non-superuser `searchroom_app`
 role, and requires TLS for remote connections. The application does not receive
@@ -45,7 +48,7 @@ validation before real client use.
 
 After configuring a verified sender and SMTP credentials, set `MAIL_ENABLED=true`
 and create a second service from the same repository for email delivery. Set its
-config-file path to `/deploy/railway-mail.json` and reference the web service's
+start command to the `mail` entry in `deploy/railway-settings.json` and reference the web service's
 database, signing, encryption, origin, and SMTP configuration. Start it after the
 web migration succeeds. It has no public domain or HTTP healthcheck. Configure a
 scheduled cleanup job (`python /app/bootstrap.py python -m app.operations cleanup`)
@@ -62,6 +65,12 @@ and database backups before using real client data.
 4. Check login and all three roles, the email worker and mail delivery using an
    authorised test account; verify monitoring and backup restoration.
 
-References: [Railway configuration](https://docs.railway.com/config-as-code/reference),
+Railway rejected setting a config-file path on this new service because Config as
+Code is deprecated. Existing legacy files stop being read on 2026-12-01. The
+deployment therefore uses explicit service settings; for a later declarative
+import, use `railway config pull` without `--include-variables`, review its plan,
+and preserve all existing resources and secrets.
+
+References: [Railway infrastructure configuration](https://docs.railway.com/infrastructure-as-code),
 [pre-deploy commands](https://docs.railway.com/deployments/pre-deploy-command),
 [healthchecks](https://docs.railway.com/deployments/healthchecks).
