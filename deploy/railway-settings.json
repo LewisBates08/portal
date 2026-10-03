@@ -37,7 +37,14 @@
       "startCommand": "python /app/bootstrap.py python -m app.operations mail-loop",
       "healthcheckPath": null,
       "restartPolicyType": "ON_FAILURE",
-      "restartPolicyMaxRetries": 5
+      "restartPolicyMaxRetries": 5,
+      "preDeployCommand": [],
+      "sleepApplication": false,
+      "multiRegionConfig": {
+        "ams": {
+          "numReplicas": 1
+        }
+      }
     }
   }
 }
