@@ -1,5 +1,32 @@
 # Railway deployment
 
+## Live verification: 2026-10-03
+
+Public URL: https://portal-production-b3df.up.railway.app
+
+The production portal deployment `b7522c39-5967-4d6b-a4d7-8d9c05688673`
+(commit `56821789c5b0e5b3c565b7da2cf39cb628782a11`) was already running when
+checked. Public HTTPS requests to `/`, `/login`, both referenced JS/CSS assets,
+`/api/v1/health/ready`, and `/api/v1/auth/csrf` all returned 200. Readiness
+returned `{"status":"ready"}`, confirming the expected database migration
+revision. The session cookie had Secure, HttpOnly, SameSite=Lax and Path=/
+attributes. The public login page also rendered successfully in a browser.
+
+Earlier crashes belong to superseded deployments: `d0457fcb` lacked
+`DATABASE_URL` and `JWT_SECRET`; `9723cdca` reached PostgreSQL but failed because
+the `users` table did not yet exist. The current service has the required
+variable names and a pre-deploy migration command configured. Service-wide logs
+include failures from older deployments, so scope crash investigations to the
+specific deployment ID and verify the public endpoint before changing a healthy
+service. No redeployment or application-code change was needed for this check.
+
+This verifies public access, assets, database readiness and session establishment.
+It does not verify an authenticated account, email delivery, backup restoration
+or all role workflows. The email-disabled deployment limitations below still
+apply.
+
+## Configuration
+
 The initial deployment uses explicit email-disabled mode (`MAIL_ENABLED=false`).
 The site can start with production security enabled, but signup, verification
 resend and password reset return 503 until email is configured. Invitations cannot

@@ -7,6 +7,8 @@ import smtplib
 import ssl
 import subprocess
 import tempfile
+import json
+from urllib.request import Request, build_opener, HTTPRedirectHandler
 from datetime import timedelta
 from email.message import EmailMessage
 from pathlib import Path
@@ -24,7 +26,39 @@ from .models import (
     now,
 )
 from .config import get_settings
-from .mfa import decrypt
+from .mfa import decrypt, encrypt
+
+
+class NoMailRedirects(HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        # Never forward account links or the relay credential to another host.
+        return None
+
+
+def deliver_mail(settings, message):
+    if settings.mail_transport == "relay":
+        request = Request(
+            settings.mail_relay_url,
+            data=json.dumps({
+                "recipient": str(message["To"]),
+                "subject": str(message["Subject"]),
+                "text": message.get_content(),
+            }).encode(),
+            headers={
+                "Authorization": "Bearer " + settings.mail_relay_token,
+                "Content-Type": "application/json",
+            },
+            method="POST",
+        )
+        with build_opener(NoMailRedirects()).open(request, timeout=20) as response:
+            if response.status != 202:
+                raise OSError("Mail relay did not accept the message")
+        return
+    with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=10) as smtp:
+        if settings.production or settings.smtp_user:
+            smtp.starttls(context=ssl.create_default_context())
+            smtp.login(settings.smtp_user, settings.smtp_password)
+        smtp.send_message(message)
 
 
 def migrate():
@@ -71,13 +105,7 @@ def mail():
                     f"<searchroom-{row.id}@{settings.mail_from.split('@')[-1].rstrip('>')}>"
                 )
                 message.set_content(decrypt(row.content))
-                with smtplib.SMTP(
-                    settings.smtp_host, settings.smtp_port, timeout=10
-                ) as smtp:
-                    if settings.production or settings.smtp_user:
-                        smtp.starttls(context=ssl.create_default_context())
-                        smtp.login(settings.smtp_user, settings.smtp_password)
-                    smtp.send_message(message)
+                deliver_mail(settings, message)
                 db.delete(row)
             except (OSError, smtplib.SMTPException):
                 row.attempts += 1
@@ -163,14 +191,44 @@ def check():
     print("Database and mail queue healthy.")
 
 
+def mail_test(recipient):
+    """Send an operator-requested delivery test through the real encrypted outbox."""
+    from .mail import require_mail
+
+    if not recipient:
+        raise SystemExit("Supply --recipient for the delivery test.")
+    require_mail(recipient)
+    with SessionLocal.begin() as db:
+        row = MailOutbox(
+            recipient=recipient,
+            content=encrypt(
+                "Searchroom email delivery test\n\n"
+                "This message was sent through the live Searchroom mail queue and worker.\n"
+                "No account was created or changed by this test."
+            ),
+        )
+        db.add(row)
+        db.flush()
+        row_id = row.id
+    mail()
+    with SessionLocal() as db:
+        if db.get(MailOutbox, row_id) is not None:
+            raise SystemExit("Mail test remains queued; inspect worker delivery errors.")
+    print("Mail test accepted by provider through the application outbox.", flush=True)
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "command",
-        choices=["migrate", "mail", "cleanup", "backup", "check", "mail-loop"],
+        choices=["migrate", "mail", "cleanup", "backup", "check", "mail-loop", "mail-test"],
     )
-    command = parser.parse_args().command
-    if command == "mail-loop":
+    parser.add_argument("--recipient", help="Recipient for mail-test only")
+    args = parser.parse_args()
+    command = args.command
+    if command == "mail-test":
+        mail_test(args.recipient)
+    elif command == "mail-loop":
         import time
 
         while True:

@@ -1,0 +1,255 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "Searchroom HTTPS email bridge with a sender-scoped Lambda role and application authentication.",
+  "Metadata": {
+    "AWSToolsMetrics": {
+      "AWSAgentToolkit": "aws-cloudformation@3"
+    }
+  },
+  "Parameters": {
+    "Sender": {
+      "Type": "String",
+      "AllowedPattern": "[^\\s@]+@[^\\s@]+\\.[^\\s@]+"
+    },
+    "AllowedRecipients": {
+      "Type": "String",
+      "MinLength": 3
+    },
+    "TokenSha256": {
+      "Type": "String",
+      "AllowedPattern": "[0-9a-f]{64}",
+      "Description": "SHA-256 of a random bearer credential; never supply the credential itself."
+    }
+  },
+  "Resources": {
+    "Logs": {
+      "Type": "AWS::Logs::LogGroup",
+      "Properties": {
+        "LogGroupName": {
+          "Fn::Sub": "/aws/lambda/${AWS::StackName}"
+        },
+        "RetentionInDays": 14
+      },
+      "DeletionPolicy": "Retain",
+      "UpdateReplacePolicy": "Retain",
+      "Metadata": {
+        "com.aws.cloudformation.Context": {
+          "why": "Bound runtime diagnostic retention",
+          "must": [
+            "Never log message bodies, addresses or credentials"
+          ]
+        }
+      }
+    },
+    "Role": {
+      "Type": "AWS::IAM::Role",
+      "Metadata": {
+        "com.aws.cloudformation.Context": {
+          "why": "Temporary Lambda credentials scoped to this sender",
+          "must": [
+            "Do not grant other AWS service access or other sending identities"
+          ]
+        }
+      },
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "lambda.amazonaws.com"
+              },
+              "Action": "sts:AssumeRole"
+            }
+          ]
+        },
+        "Policies": [
+          {
+            "PolicyName": "SendSearchroomMail",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "ses:SendEmail"
+                  ],
+                  "Resource": {
+                    "Fn::Sub": "arn:${AWS::Partition}:ses:${AWS::Region}:${AWS::AccountId}:identity/${Sender}"
+                  },
+                  "Condition": {
+                    "StringEquals": {
+                      "ses:FromAddress": {
+                        "Ref": "Sender"
+                      }
+                    }
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "logs:CreateLogStream",
+                    "logs:PutLogEvents"
+                  ],
+                  "Resource": {
+                    "Fn::GetAtt": [
+                      "Logs",
+                      "Arn"
+                    ]
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "Relay": {
+      "Type": "AWS::Lambda::Function",
+      "Metadata": {
+        "com.aws.cloudformation.Context": {
+          "why": "HTTPS mail bridge for Railway without AWS credentials on Railway",
+          "must": [
+            "Authenticate bearer digest before sending",
+            "Restrict recipients until production email is approved",
+            "No body or credential logging"
+          ]
+        }
+      },
+      "Properties": {
+        "FunctionName": {
+          "Ref": "AWS::StackName"
+        },
+        "Runtime": "python3.13",
+        "Handler": "index.handler",
+        "Architectures": [
+          "arm64"
+        ],
+        "Timeout": 15,
+        "MemorySize": 128,
+        "Role": {
+          "Fn::GetAtt": [
+            "Role",
+            "Arn"
+          ]
+        },
+        "Environment": {
+          "Variables": {
+            "TOKEN_SHA256": {
+              "Ref": "TokenSha256"
+            },
+            "SENDER": {
+              "Ref": "Sender"
+            },
+            "ALLOWED_RECIPIENTS": {
+              "Ref": "AllowedRecipients"
+            }
+          }
+        },
+        "Code": {
+          "ZipFile": "\"\"\"Authenticated Railway-to-SES bridge. Never log request bodies or credentials.\"\"\"\n\nimport base64\nimport hashlib\nimport hmac\nimport json\nimport os\nimport re\n\nimport boto3\nfrom botocore.config import Config\nfrom botocore.exceptions import BotoCoreError, ClientError\n\nses = boto3.client(\"sesv2\", config=Config(\n    connect_timeout=3, read_timeout=8,\n    retries={\"mode\": \"standard\", \"total_max_attempts\": 1},\n))\n\n\ndef response(status, detail):\n    return {\"statusCode\": status, \"headers\": {\n        \"content-type\": \"application/json\", \"cache-control\": \"no-store\",\n    }, \"body\": json.dumps({\"status\": detail})}\n\n\ndef handler(event, context):\n    if event.get(\"requestContext\", {}).get(\"http\", {}).get(\"method\") != \"POST\":\n        return response(405, \"method_not_allowed\")\n    authorization = event.get(\"headers\", {}).get(\"authorization\", \"\")\n    expected = os.environ[\"TOKEN_SHA256\"]\n    supplied = authorization.removeprefix(\"Bearer \")\n    if not authorization.startswith(\"Bearer \") or not hmac.compare_digest(\n        hashlib.sha256(supplied.encode()).hexdigest(), expected\n    ):\n        return response(401, \"unauthorized\")\n    try:\n        raw = event.get(\"body\") or \"\"\n        if len(raw) > 90000:\n            return response(413, \"message_too_large\")\n        if event.get(\"isBase64Encoded\"):\n            raw = base64.b64decode(raw, validate=True).decode(\"utf-8\")\n        payload = json.loads(raw)\n        recipient = payload[\"recipient\"]\n        subject = payload[\"subject\"]\n        body = payload[\"text\"]\n        if (not isinstance(recipient, str)\n            or not re.fullmatch(r\"[^\\s@,;<>]+@[^\\s@,;<>]+\\.[^\\s@,;<>]+\", recipient)\n            or len(recipient) > 254\n            or not isinstance(subject, str) or not 1 <= len(subject) <= 200\n            or \"\\r\" in subject or \"\\n\" in subject\n            or not isinstance(body, str) or not 1 <= len(body) <= 64000):\n            return response(400, \"invalid_message\")\n    except (ValueError, KeyError, TypeError, UnicodeError):\n        return response(400, \"invalid_message\")\n    # Explicit pilot restriction; SES independently enforces its sandbox rules.\n    allowed = {value.strip().lower() for value in os.environ[\"ALLOWED_RECIPIENTS\"].split(\",\")}\n    if recipient.lower() not in allowed:\n        return response(403, \"recipient_not_enabled\")\n    try:\n        ses.send_email(\n            FromEmailAddress=\"Searchroom <\" + os.environ[\"SENDER\"] + \">\",\n            Destination={\"ToAddresses\": [recipient]},\n            Content={\"Simple\": {\n                \"Subject\": {\"Data\": subject, \"Charset\": \"UTF-8\"},\n                \"Body\": {\"Text\": {\"Data\": body, \"Charset\": \"UTF-8\"}},\n            }},\n        )\n    except (ClientError, BotoCoreError):\n        # Let the encrypted application outbox retry without logging PII.\n        return response(503, \"temporarily_unavailable\")\n    return response(202, \"accepted\")\n"
+        }
+      }
+    },
+    "Url": {
+      "Type": "AWS::Lambda::Url",
+      "Metadata": {
+        "com.aws.cloudformation.Context": {
+          "why": "Reachable from Railway through HTTPS",
+          "must": [
+            "Handler must authenticate every send"
+          ]
+        }
+      },
+      "Properties": {
+        "TargetFunctionArn": {
+          "Fn::GetAtt": [
+            "Relay",
+            "Arn"
+          ]
+        },
+        "AuthType": "NONE"
+      }
+    },
+    "UrlPermission": {
+      "Type": "AWS::Lambda::Permission",
+      "Metadata": {
+        "com.aws.cloudformation.Context": {
+          "why": "Allow HTTPS invocation before handler authentication",
+          "must": [
+            "Keep FunctionUrlAuthType constraint"
+          ]
+        }
+      },
+      "Properties": {
+        "FunctionName": {
+          "Ref": "Relay"
+        },
+        "Action": "lambda:InvokeFunctionUrl",
+        "Principal": "*",
+        "FunctionUrlAuthType": "NONE"
+      }
+    },
+    "InvokePermission": {
+      "Type": "AWS::Lambda::Permission",
+      "Metadata": {
+        "com.aws.cloudformation.Context": {
+          "why": "Underlying invocation permission required for function URLs",
+          "must": [
+            "Keep InvokedViaFunctionUrl constraint"
+          ]
+        }
+      },
+      "Properties": {
+        "FunctionName": {
+          "Ref": "Relay"
+        },
+        "Action": "lambda:InvokeFunction",
+        "Principal": "*",
+        "InvokedViaFunctionUrl": true
+      }
+    },
+    "Errors": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Metadata": {
+        "com.aws.cloudformation.Context": {
+          "why": "Expose runtime failures for operational review",
+          "must": [
+            "Do not record account email content"
+          ]
+        }
+      },
+      "Properties": {
+        "AlarmDescription": "Searchroom mail relay runtime failures",
+        "Namespace": "AWS/Lambda",
+        "MetricName": "Errors",
+        "Dimensions": [
+          {
+            "Name": "FunctionName",
+            "Value": {
+              "Ref": "Relay"
+            }
+          }
+        ],
+        "Statistic": "Sum",
+        "Period": 300,
+        "EvaluationPeriods": 1,
+        "Threshold": 1,
+        "ComparisonOperator": "GreaterThanOrEqualToThreshold",
+        "TreatMissingData": "notBreaching"
+      }
+    }
+  },
+  "Outputs": {
+    "RelayUrl": {
+      "Description": "HTTPS endpoint for the Railway mail worker",
+      "Value": {
+        "Fn::GetAtt": [
+          "Url",
+          "FunctionUrl"
+        ]
+      }
+    }
+  }
+}

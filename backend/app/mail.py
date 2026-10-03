@@ -9,16 +9,21 @@ from .models import EmailAction, MailOutbox, now
 from .security import digest
 
 
-def require_mail():
+def require_mail(email=None):
     if not get_settings().mail_enabled:
         raise HTTPException(
             503,
             "Account email is not configured yet. Please try again once setup is complete.",
         )
+    allowed = get_settings().mail_allowed_recipients
+    if email and allowed and email.lower() not in {
+        value.strip().lower() for value in allowed.split(",")
+    }:
+        raise HTTPException(503, "Email is currently limited to approved test accounts.")
 
 
 def queue_action(db, email, kind, payload, minutes):
-    require_mail()
+    require_mail(email)
     token = secrets.token_urlsafe(32)
     db.add(
         EmailAction(
@@ -41,7 +46,7 @@ def queue_action(db, email, kind, payload, minutes):
 
 
 def queue_invitation(db, email, link):
-    require_mail()
+    require_mail(email)
     db.add(
         MailOutbox(
             recipient=email,

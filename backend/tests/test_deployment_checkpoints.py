@@ -95,6 +95,21 @@ def test_mail_can_be_explicitly_disabled_without_disabling_production_security()
         valid_settings(mail_enabled=False, frontend_url="http://localhost:5173")
 
 
+def test_production_relay_requires_london_https_and_private_token():
+    values = dict(mail_transport="relay", smtp_user="", smtp_password="",
+                  mail_relay_url="https://relay.lambda-url.eu-west-2.on.aws/",
+                  mail_relay_token="relay-test-secret-" * 5)
+    settings = valid_settings(**values)
+    assert settings.mail_relay_token not in repr(settings)
+    for url in ("http://relay.lambda-url.eu-west-2.on.aws/", "https://evil.invalid/",
+                "https://relay.lambda-url.eu-west-2.on.aws@evil.invalid/",
+                "https://relay.lambda-url.eu-west-2.on.aws/?secret=value"):
+        with pytest.raises(ValidationError):
+            valid_settings(**(values | {"mail_relay_url": url}))
+    with pytest.raises(ValidationError):
+        valid_settings(**(values | {"mail_relay_token": ""}))
+
+
 def test_validation_does_not_echo_credentials(client):
     response = client.post(
         "/api/v1/auth/login",

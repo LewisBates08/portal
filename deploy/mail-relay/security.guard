@@ -1,0 +1,13 @@
+rule mail_relay_constraints {
+  Resources.Relay.Properties.Runtime == 'python3.13'
+  Resources.Relay.Properties.Timeout <= 15
+  Resources.Relay.Properties.MemorySize <= 256
+  Resources.Role.Properties.Policies[0].PolicyDocument.Statement[0].Action == ['ses:SendEmail']
+  Resources.Role.Properties.Policies[0].PolicyDocument.Statement[0].Resource exists
+  Resources.Role.Properties.Policies[0].PolicyDocument.Statement[0].Condition exists
+  Resources.InvokePermission.Properties.InvokedViaFunctionUrl == true
+  Resources.UrlPermission.Properties.FunctionUrlAuthType == 'NONE'
+  Resources.Logs.Properties.RetentionInDays <= 14
+  Resources.Relay.Properties.Environment.Variables.TOKEN_SHA256 exists
+  Resources.Relay.Properties.Environment.Variables.ALLOWED_RECIPIENTS exists
+}

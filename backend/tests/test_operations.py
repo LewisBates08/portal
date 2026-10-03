@@ -4,6 +4,8 @@ from app import operations
 from app.models import MailOutbox, now
 from app.mail import queue_action
 import pytest
+import json
+from urllib.error import HTTPError
 from app.config import get_settings
 from app.models import EmailAction
 
@@ -82,3 +84,56 @@ def test_outbox_retry_and_delete_after_acceptance(db, monkeypatch):
         )
         is None
     )
+
+
+def test_relay_outage_preserves_outbox_until_acceptance(db, monkeypatch):
+    settings = get_settings()
+    monkeypatch.setattr(settings, "mail_transport", "relay")
+    monkeypatch.setattr(settings, "mail_relay_url", "https://test.lambda-url.eu-west-2.on.aws/")
+    monkeypatch.setattr(settings, "mail_relay_token", "test-token-" * 8)
+    queue_action(db, "delivery@example.com", "verify", {}, 1440)
+    db.commit()
+
+    class Factory:
+        @staticmethod
+        @contextmanager
+        def begin():
+            yield db
+            db.commit()
+
+    monkeypatch.setattr(operations, "SessionLocal", Factory)
+    accepted = False
+
+    class Opener:
+        @contextmanager
+        def open(self, request, timeout):
+            assert request.get_header("Authorization") == "Bearer " + settings.mail_relay_token
+            assert json.loads(request.data)["recipient"] == "delivery@example.com"
+            assert timeout == 20
+            if not accepted:
+                raise HTTPError(request.full_url, 503, "unavailable", {}, None)
+            yield type("Response", (), {"status": 202})()
+
+    monkeypatch.setattr(operations, "build_opener", lambda *args: Opener())
+    operations.mail()
+    row = db.scalar(select(MailOutbox).where(MailOutbox.recipient == "delivery@example.com"))
+    assert row.attempts == 1
+    row.next_attempt_at = now()
+    db.commit()
+    accepted = True
+    operations.mail()
+    assert db.scalar(select(MailOutbox.id).where(MailOutbox.recipient == "delivery@example.com")) is None
+
+
+def test_relay_does_not_follow_redirects():
+    assert operations.NoMailRedirects().redirect_request(None, None, 302, "", {}, "https://evil.invalid") is None
+
+
+def test_pilot_recipient_restriction_does_not_queue(client, db, monkeypatch):
+    monkeypatch.setattr(get_settings(), "mail_allowed_recipients", "approved@example.com")
+    response = client.post("/api/v1/auth/register", json={
+        "name": "Pilot", "agency_name": "Pilot", "email": "other@example.com",
+        "password": "TemporaryTestPassword!",
+    })
+    assert response.status_code == 503
+    assert db.scalar(select(MailOutbox.id).where(MailOutbox.recipient == "other@example.com")) is None
