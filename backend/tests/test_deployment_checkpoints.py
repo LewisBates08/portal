@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 from pydantic import ValidationError
 from sqlalchemy.orm import Session
 from app.config import Settings, get_settings
+from app.database import connection_args
 from app.main import app
 from app.models import User
 from test_concurrency import parallel_world  # noqa: F401
@@ -112,6 +113,17 @@ def test_mail_can_be_disabled_without_weakening_other_production_checks():
     assert settings.mail_enabled is False
     with pytest.raises(ValidationError):
         valid_settings(mail_enabled=False, frontend_url="http://localhost:5173")
+
+
+def test_neon_pooler_omits_unsupported_startup_options():
+    pooled = connection_args(
+        "postgresql+psycopg://user:password@ep-example-pooler.eu-west-2.aws.neon.tech/db"
+    )
+    direct = connection_args(
+        "postgresql+psycopg://user:password@ep-example.eu-west-2.aws.neon.tech/db"
+    )
+    assert pooled == {"connect_timeout": 5}
+    assert "statement_timeout" in direct["options"]
 
 
 def test_validation_does_not_echo_credentials(client):
