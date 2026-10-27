@@ -1,6 +1,7 @@
 """Materialize the public database CA supplied as runtime configuration, then exec."""
 
 import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -16,6 +17,15 @@ if os.environ.get("ENVIRONMENT") == "production":
 cert = os.environ.get("DATABASE_CA_CERT")
 if cert:
     Path("/tmp/postgres-ca.crt").write_text(cert)
+if (
+    os.environ.get("ENVIRONMENT") == "production"
+    and os.environ.get("RUN_MIGRATIONS_ON_STARTUP", "").lower()
+    in ("true", "1", "yes")
+):
+    subprocess.run(
+        [sys.executable, "-m", "app.operations", "migrate"],
+        check=True,
+    )
 if len(sys.argv) < 2:
     raise SystemExit("Supply an application or maintenance command.")
 os.execvp(sys.argv[1], sys.argv[1:])
