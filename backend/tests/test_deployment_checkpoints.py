@@ -82,6 +82,23 @@ def test_production_config_and_repr_hide_secrets():
     assert "private-secret-too-short" not in str(failure.value)
 
 
+def test_production_database_url_enforces_full_tls_verification():
+    settings = valid_settings(
+        database_url="postgresql+psycopg://app_owner:private@db.example.net/searchroom?sslmode=require"
+    )
+    assert "sslmode=verify-full" in settings.database_url
+    assert "sslrootcert=system" in settings.database_url
+
+
+def test_production_database_url_preserves_supplied_ca_path():
+    settings = valid_settings(
+        database_url="postgresql+psycopg://app_owner:private@db.example.net/searchroom"
+        "?sslmode=require&sslrootcert=/tmp/provider-ca.pem"
+    )
+    assert "sslmode=verify-full" in settings.database_url
+    assert "sslrootcert=%2Ftmp%2Fprovider-ca.pem" in settings.database_url
+
+
 def test_validation_does_not_echo_credentials(client):
     response = client.post(
         "/api/v1/auth/login",

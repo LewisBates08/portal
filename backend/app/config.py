@@ -86,12 +86,16 @@ class Settings(BaseSettings):
             from cryptography.fernet import Fernet
 
             url = make_url(self.database_url)
-            if url.query.get("sslmode") != "verify-full" or not url.query.get(
-                "sslrootcert"
-            ):
-                raise ValueError(
-                    "Production database requires verify-full TLS and sslrootcert."
-                )
+            # Managed PostgreSQL providers commonly supply a URL with
+            # ``sslmode=require``. Upgrade it instead of weakening the production
+            # invariant or requiring the credential-bearing URL to be copied just
+            # to add safe client options. ``system`` tells libpq to use the image's
+            # CA trust store while verify-full also checks the database hostname.
+            query = dict(url.query)
+            query["sslmode"] = "verify-full"
+            query.setdefault("sslrootcert", "system")
+            url = url.set(query=query)
+            self.database_url = url.render_as_string(hide_password=False)
             if (
                 not url.password
                 or url.password in ("portal", "password")
