@@ -1,6 +1,7 @@
 """Explicit response contracts keep secret columns out of API responses."""
 
 from datetime import datetime
+from typing import Generic, TypeVar
 from pydantic import BaseModel
 from .schemas import CandidateData, DocumentData, MilestoneData, ProjectData, Role
 
@@ -97,8 +98,6 @@ class MilestoneView(MilestoneData):
     id: int
     project_id: int
 
-
-from typing import Generic, TypeVar
 
 T = TypeVar("T")
 

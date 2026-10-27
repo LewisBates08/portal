@@ -6,7 +6,6 @@ from fastapi.encoders import jsonable_encoder
 from sqlalchemy import select, text
 from .models import User, Project, Submission, Agency
 from .security import digest, current_user, throttle, audit
-from .database import get_db
 from .config import get_settings
 
 
@@ -71,14 +70,12 @@ def versioned(db, row, data):
     row.version += 1
 
 
-def write_limit(request: Request, db=Depends(get_db), user=Depends(current_user)):
+def write_limit(request: Request, user=Depends(current_user)):
     if request.method not in ("GET", "HEAD", "OPTIONS"):
-        throttle(db, f"write-user:{user.id}", 120)
-        throttle(
-            db, f"write-agency:{user.agency_id}", get_settings().daily_writes, 86400
-        )
+        throttle(f"write-user:{user.id}", 120)
+        throttle(f"write-agency:{user.agency_id}", get_settings().daily_writes, 86400)
     else:
-        throttle(db, f"read-user:{user.id}", 600)
+        throttle(f"read-user:{user.id}", 600)
 
 
 def lock_project(db, project_id):

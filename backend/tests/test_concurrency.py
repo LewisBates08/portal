@@ -181,17 +181,17 @@ def test_two_editors_cannot_overwrite_same_version(parallel_world):
 
 
 def test_rate_limit_is_shared_across_connections(parallel_world):
-    engine, _, _ = parallel_world
+    parallel_world
+    key = "shared-limit-" + uuid.uuid4().hex
 
     def attempt(_):
         from fastapi import HTTPException
 
-        with Session(engine) as db:
-            try:
-                throttle(db, "shared-limit", 1)
-                return 200
-            except HTTPException as e:
-                return e.status_code
+        try:
+            throttle(key, 1)
+            return 200
+        except HTTPException as e:
+            return e.status_code
 
     with ThreadPoolExecutor(max_workers=2) as pool:
         assert sorted(pool.map(attempt, range(2))) == [200, 429]

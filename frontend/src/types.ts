@@ -43,6 +43,9 @@ export interface Candidate {
   name: string;
   current_role: string;
   company: string;
+  email: string | null;
+  phone: string;
+  skills: string[];
   summary: string;
   cv_url: string | null;
   stage: (typeof stages)[number];

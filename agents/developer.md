@@ -1,0 +1,2 @@
+## Developer agent
+Read AGENTS.md , the code and the plan in pipeline/spec.md and pipeline/review.md if it exists. Using these sources, write ,edit and delete the code to execute the planned improvements. do not change spec.md. 

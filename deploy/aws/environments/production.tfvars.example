@@ -1,0 +1,10 @@
+environment = "production"
+hostname = "portal.radiumsearch.com"
+sender_domain = "radiumsearch.com"
+alert_email = "lewisbates2008@outlook.com"
+github_oidc_provider_arn = "arn:aws:iam::ACCOUNT_ID:oidc-provider/token.actions.githubusercontent.com"
+# Set after reviewing the estimate and GBP/USD conversion, including VAT.
+budget_usd = 75
+cost_reviewed = false
+bootstrap_database_access = false
+protect_database = true

@@ -1,0 +1,5 @@
+bucket = "ACCOUNT_SPECIFIC_STATE_BUCKET"
+key = "searchroom/production/terraform.tfstate"
+region = "eu-west-2"
+encrypt = true
+use_lockfile = true

@@ -42,7 +42,8 @@ import {
   useRemote,
   More,
 } from "./ui";
-import type { ClientOrg, Project } from "./types";
+import { stages } from "./types";
+import type { Candidate, ClientOrg, Project } from "./types";
 
 export function Layout() {
   const { user, signOut } = useAuth();
@@ -344,6 +345,205 @@ export function Dashboard() {
     </>
   );
 }
+
+interface CandidateExtractionDraft {
+  name: string;
+  company: string | null;
+  job_title: string | null;
+  email: string | null;
+  phone: string | null;
+  skills: string[];
+}
+
+export function CandidateUploadPage() {
+  const { projectId } = useParams();
+  const navigate = useNavigate();
+  const { user } = useAuth();
+  const project = useRemote<Project>(`/projects/${projectId}`);
+  const [sourceUrl, setSourceUrl] = useState("");
+  const [sourceFile, setSourceFile] = useState<File | null>(null);
+  const [extracting, setExtracting] = useState(false);
+  const [error, setError] = useState("");
+  const [draft, setDraft] = useState<CandidateExtractionDraft | null>(null);
+  const [formRevision, setFormRevision] = useState(0);
+  const projectPath = `/projects/${projectId}`;
+
+  async function extractCV() {
+    setError("");
+    if (Boolean(sourceFile) === Boolean(sourceUrl.trim())) {
+      setError("Choose one CV file or enter one CV URL.");
+      return;
+    }
+    const body = new FormData();
+    if (sourceFile) body.append("cv_file", sourceFile);
+    else body.append("cv_url", sourceUrl.trim());
+    setExtracting(true);
+    try {
+      const result = await api<CandidateExtractionDraft>(
+        `${projectPath}/candidates/extract`,
+        "POST",
+        body,
+        true,
+        undefined,
+        90000,
+      );
+      setDraft(result);
+      setFormRevision((revision) => revision + 1);
+    } catch (cause) {
+      setError((cause as Error).message);
+    } finally {
+      setExtracting(false);
+    }
+  }
+
+  if (project.loading) return <Loading />;
+  if (project.error || !project.data)
+    return (
+      <>
+        <Link className="back-link" to="/">
+          <ArrowLeft size={16} /> Searches
+        </Link>
+        <ErrorBox message={project.error || "Search not found."} />
+      </>
+    );
+
+  const canEdit = user?.role !== "client" && !project.data.archived_at;
+  if (!canEdit)
+    return (
+      <>
+        <Link className="back-link" to={`${projectPath}/candidates`}>
+          <ArrowLeft size={16} /> Candidates
+        </Link>
+        <ErrorBox message="Only agency staff can add candidates to an active search." />
+      </>
+    );
+
+  return (
+    <>
+      <Link className="back-link" to={`${projectPath}/candidates`}>
+        <ArrowLeft size={16} />
+        {project.data.title}
+        <ChevronRight size={14} />
+        Candidates
+      </Link>
+      <div className="page-heading">
+        <div>
+          <span className="eyebrow">{project.data.client_name}</span>
+          <h1>Upload a candidate CV</h1>
+          <p className="muted">
+            Extract candidate details, review the draft, then save it to this
+            search.
+          </p>
+        </div>
+      </div>
+      <section className="panel stack">
+        <div>
+          <h2>Choose a CV</h2>
+          <p className="muted">
+            Upload a PDF, DOCX, or TXT file, or enter a direct HTTPS CV file URL.
+            The CV is sent to OpenAI for extraction and is not saved by this
+            upload step.
+          </p>
+        </div>
+        <label className="field">
+          <span>CV file</span>
+          <input
+            type="file"
+            accept=".pdf,.docx,.txt,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain"
+            onChange={(event) => setSourceFile(event.target.files?.[0] ?? null)}
+          />
+        </label>
+        <label className="field">
+          <span>Or direct HTTPS CV URL</span>
+          <input
+            type="url"
+            maxLength={2048}
+            value={sourceUrl}
+            onChange={(event) => setSourceUrl(event.target.value)}
+          />
+        </label>
+        <div>
+          <button
+            type="button"
+            className="button"
+            onClick={extractCV}
+            disabled={extracting}
+          >
+            {extracting ? "Extracting…" : "Extract details"}
+          </button>
+        </div>
+        <ErrorBox message={error} />
+      </section>
+      {draft && (
+        <section className="panel stack">
+          <div>
+            <h2>Check the extracted details</h2>
+            <p className="muted">
+              Review and edit every field before saving. Nothing is added to the
+              candidate list until you save this form.
+            </p>
+          </div>
+          <Form
+            key={formRevision}
+            submit="Save candidate"
+            onCancel={() => navigate(`${projectPath}/candidates`)}
+            onSubmit={async (form) => {
+              await api<Candidate>(`${projectPath}/candidates`, "POST", {
+                name: str(form, "name"),
+                current_role: str(form, "current_role"),
+                company: str(form, "company"),
+                email: optional(form, "email"),
+                phone: str(form, "phone"),
+                skills: str(form, "skills")
+                  .split(",")
+                  .map((skill) => skill.trim())
+                  .filter(Boolean),
+                summary: "",
+                cv_url: optional(form, "cv_url"),
+                stage: str(form, "stage"),
+                client_visible: form.get("client_visible") === "on",
+              });
+              navigate(`${projectPath}/candidates`);
+            }}
+          >
+            <Field label="Candidate name" name="name" value={draft.name} required />
+            <div className="form-grid">
+              <Field label="Job title" name="current_role" value={draft.job_title ?? ""} />
+              <Field label="Company" name="company" value={draft.company ?? ""} />
+            </div>
+            <div className="form-grid">
+              <Field label="Email" name="email" type="email" value={draft.email ?? ""} maxLength={254} />
+              <Field label="Phone" name="phone" type="tel" value={draft.phone ?? ""} maxLength={40} />
+            </div>
+            <Field
+              label="Skills (comma-separated)"
+              name="skills"
+              type="textarea"
+              value={draft.skills.join(", ")}
+              maxLength={4000}
+            />
+            <Field
+              label="CV URL"
+              name="cv_url"
+              type="url"
+              value={sourceUrl.trim()}
+            />
+            <Field label="Candidate stage" name="stage" value="Identified">
+              {stages.map((stage) => (
+                <option key={stage}>{stage}</option>
+              ))}
+            </Field>
+            <label className="checkbox">
+              <input name="client_visible" type="checkbox" />
+              Share this candidate with the client
+            </label>
+          </Form>
+        </section>
+      )}
+    </>
+  );
+}
+
 const tabs = [
   { key: "overview", title: "Overview", icon: BriefcaseBusiness },
   { key: "candidates", title: "Candidates", icon: Users },

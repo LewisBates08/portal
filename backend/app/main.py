@@ -2,7 +2,10 @@ import json
 import logging
 import time
 import uuid
+from functools import lru_cache
 from pathlib import Path
+from alembic.config import Config
+from alembic.script import ScriptDirectory
 from fastapi import FastAPI, Request, Depends, HTTPException
 from fastapi.exceptions import RequestValidationError
 from contextlib import asynccontextmanager
@@ -16,6 +19,7 @@ from .config import get_settings
 from .database import get_db
 from .security import require_csrf
 from .hosts import SearchroomTrustedHostMiddleware
+from .body_limit import RequestBodyLimitMiddleware
 
 settings = get_settings()
 if settings.production:
@@ -64,6 +68,7 @@ app.add_middleware(
     allowed_hosts=settings.trusted_hosts.split(","),
     railway=bool(settings.railway_service_id),
 )
+app.add_middleware(RequestBodyLimitMiddleware)
 # Same-origin frontend/API: intentionally no CORS middleware or cross-origin grants.
 # Cookie writes additionally require the exact configured HTTPS Origin and CSRF token.
 for router in (auth.router, admin.router, projects.router):
@@ -72,11 +77,10 @@ for router in (auth.router, admin.router, projects.router):
 
 @app.exception_handler(IntegrityError)
 async def conflict(request, exc):
+    log_failure(request, exc, "unexpected_integrity_error")
     return JSONResponse(
-        status_code=409,
-        content={
-            "detail": "This record conflicts with another change. Refresh and try again."
-        },
+        status_code=500,
+        content={"detail": "An unexpected database error occurred."},
     )
 
 
@@ -110,27 +114,14 @@ async def validation_error(request, exc):
 async def headers(request: Request, call_next):
     started = time.monotonic()
     request_id = str(uuid.uuid4())
-    # Buffer at most 1 MiB, including chunked requests. Never log the body.
-    if request.method in ("POST", "PUT", "PATCH", "DELETE"):
-        length = 0
-        chunks = []
-        async for chunk in request.stream():
-            length += len(chunk)
-            if length > 1048576:
-                return JSONResponse(
-                    status_code=413, content={"detail": "Request is too large."}
-                )
-            chunks.append(chunk)
-        request._body = b"".join(chunks)
+    request.state.request_id = request_id
     try:
         response = await call_next(request)
-    except Exception:
+    except Exception as exc:
         if not settings.production:
             raise
         # Do not log exceptions/SQL parameters or return framework tracebacks.
-        logging.getLogger("searchroom").error(
-            json.dumps({"event": "request_failed", "request_id": request_id})
-        )
+        log_failure(request, exc, "unexpected_application_error")
         response = JSONResponse(
             status_code=500,
             content={
@@ -170,6 +161,23 @@ async def headers(request: Request, call_next):
     return response
 
 
+def log_failure(request: Request, exc: Exception | None, category: str) -> None:
+    if not settings.production:
+        return
+    route = request.scope.get("route")
+    sqlstate = getattr(getattr(exc, "orig", None), "sqlstate", None)
+    event = {
+        "event": "request_failed",
+        "request_id": getattr(request.state, "request_id", "unknown"),
+        "route": getattr(route, "path", "unmatched"),
+        "exception_class": type(exc).__name__ if exc else "Exception",
+        "category": category,
+    }
+    if isinstance(sqlstate, str) and len(sqlstate) == 5:
+        event["sqlstate"] = sqlstate
+    logging.getLogger("searchroom").error(json.dumps(event))
+
+
 @app.get("/api/v1/health")
 @app.get("/api/v1/health/live")
 def live():
@@ -178,10 +186,25 @@ def live():
 
 @app.get("/api/v1/health/ready")
 def ready(db=Depends(get_db)):
-    revision = db.scalar(text("SELECT version_num FROM alembic_version"))
-    if revision != "readiness_20260913":
-        raise HTTPException(503, "Database migration is required.")
+    try:
+        database_heads = frozenset(
+            db.scalars(text("SELECT version_num FROM alembic_version")).all()
+        )
+        repository_heads = repository_migration_heads()
+    except Exception:
+        raise HTTPException(503, "Service is not ready.") from None
+    if not database_heads or database_heads != repository_heads:
+        raise HTTPException(503, "Service is not ready.")
     return {"status": "ready"}
+
+
+@lru_cache(maxsize=1)
+def repository_migration_heads() -> frozenset[str]:
+    """Read repository heads once; database state is checked on every request."""
+    backend_root = Path(__file__).resolve().parents[1]
+    config = Config(str(backend_root / "alembic.ini"))
+    config.set_main_option("script_location", str(backend_root / "migrations"))
+    return frozenset(ScriptDirectory.from_config(config).get_heads())
 
 
 if settings.static_dir:

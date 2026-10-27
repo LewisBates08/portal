@@ -1,4 +1,5 @@
 from sqlalchemy import create_engine
+from contextlib import contextmanager
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 from .config import get_settings
 
@@ -22,5 +23,12 @@ SessionLocal = sessionmaker(bind=engine, expire_on_commit=False)
 
 
 def get_db():
+    with SessionLocal() as db:
+        yield db
+
+
+@contextmanager
+def rate_limit_session():
+    """A separate durability boundary that must never be a business session."""
     with SessionLocal() as db:
         yield db

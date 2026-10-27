@@ -39,11 +39,13 @@ def deliver_mail(settings, message):
     if settings.mail_transport == "relay":
         request = Request(
             settings.mail_relay_url,
-            data=json.dumps({
-                "recipient": str(message["To"]),
-                "subject": str(message["Subject"]),
-                "text": message.get_content(),
-            }).encode(),
+            data=json.dumps(
+                {
+                    "recipient": str(message["To"]),
+                    "subject": str(message["Subject"]),
+                    "text": message.get_content(),
+                }
+            ).encode(),
             headers={
                 "Authorization": "Bearer " + settings.mail_relay_token,
                 "Content-Type": "application/json",
@@ -213,7 +215,9 @@ def mail_test(recipient):
     mail()
     with SessionLocal() as db:
         if db.get(MailOutbox, row_id) is not None:
-            raise SystemExit("Mail test remains queued; inspect worker delivery errors.")
+            raise SystemExit(
+                "Mail test remains queued; inspect worker delivery errors."
+            )
     print("Mail test accepted by provider through the application outbox.", flush=True)
 
 
@@ -221,7 +225,15 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "command",
-        choices=["migrate", "mail", "cleanup", "backup", "check", "mail-loop", "mail-test"],
+        choices=[
+            "migrate",
+            "mail",
+            "cleanup",
+            "backup",
+            "check",
+            "mail-loop",
+            "mail-test",
+        ],
     )
     parser.add_argument("--recipient", help="Recipient for mail-test only")
     args = parser.parse_args()

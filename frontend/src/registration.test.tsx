@@ -29,7 +29,7 @@ it("requires email verification instead of storing login credentials after signu
   await user.type(screen.getByLabelText("Agency name"), "Test Agency");
   await user.type(screen.getByLabelText("Email address"), "test@example.com");
   await user.type(
-    screen.getByLabelText("Password (at least 10 characters)"),
+    screen.getByLabelText("Password (at least 15 characters)"),
     "PasswordForTests!",
   );
   await user.type(
@@ -55,7 +55,7 @@ it("preserves signup fields when passwords do not match", async () => {
   await user.type(screen.getByLabelText("Agency name"), "Agency");
   await user.type(screen.getByLabelText("Email address"), "test@example.com");
   await user.type(
-    screen.getByLabelText("Password (at least 10 characters)"),
+    screen.getByLabelText("Password (at least 15 characters)"),
     "PasswordForTests!",
   );
   await user.type(

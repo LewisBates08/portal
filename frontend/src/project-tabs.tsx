@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import {
   Check,
   Circle,
@@ -211,6 +212,12 @@ function CandidateForm({
             name: str(f, "name"),
             current_role: str(f, "current_role"),
             company: str(f, "company"),
+            email: optional(f, "email"),
+            phone: str(f, "phone"),
+            skills: str(f, "skills")
+              .split(",")
+              .map((skill) => skill.trim())
+              .filter(Boolean),
             summary: str(f, "summary"),
             cv_url: optional(f, "cv_url"),
             stage: str(f, "stage"),
@@ -230,8 +237,35 @@ function CandidateForm({
             name="current_role"
             value={candidate?.current_role}
           />
-          <Field label="Company" name="company" value={candidate?.company} />
+          <Field
+            label="Company"
+            name="company"
+            value={candidate?.company}
+          />
         </div>
+        <div className="form-grid">
+          <Field
+            label="Email"
+            name="email"
+            type="email"
+            value={candidate?.email ?? ""}
+            maxLength={254}
+          />
+          <Field
+            label="Phone"
+            name="phone"
+            type="tel"
+            value={candidate?.phone}
+            maxLength={40}
+          />
+        </div>
+        <Field
+          label="Skills (comma-separated)"
+          name="skills"
+          type="textarea"
+          value={candidate?.skills.join(", ")}
+          maxLength={4000}
+        />
         <Field
           label="Profile summary"
           name="summary"
@@ -301,7 +335,14 @@ function FeedbackPanel({
     </div>
   );
 }
-export function CandidatesTab({ base, edit }: { base: string; edit: boolean }) {
+export function CandidatesTab({
+  base,
+  edit,
+}: {
+  base: string;
+  edit: boolean;
+}) {
+  const navigate = useNavigate();
   const candidates = useRemote<Candidate[]>(`${base}/candidates`);
   const [editing, setEditing] = useState<Candidate | "new" | null>(null);
   const [expanded, setExpanded] = useState<number | null>(null);
@@ -317,10 +358,18 @@ export function CandidatesTab({ base, edit }: { base: string; edit: boolean }) {
           </p>
         </div>
         {edit && (
-          <button className="button" onClick={() => setEditing("new")}>
-            <Plus size={18} />
-            Add candidate
-          </button>
+          <div className="form-actions">
+            <button
+              className="button secondary"
+              onClick={() => navigate(`${base}/candidates/upload`)}
+            >
+              Upload CV
+            </button>
+            <button className="button" onClick={() => setEditing("new")}>
+              <Plus size={18} />
+              Add candidate
+            </button>
+          </div>
         )}
       </div>
       {editing && (

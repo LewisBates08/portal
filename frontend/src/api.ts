@@ -56,15 +56,17 @@ export async function api<T>(
   body?: unknown,
   authenticated = true,
   signal?: AbortSignal,
+  timeoutMs = 15000,
 ): Promise<T> {
   const controller = new AbortController();
   pending.add(controller);
-  const timer = setTimeout(() => controller.abort(), 15000);
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   const abort = () => controller.abort();
   signal?.addEventListener("abort", abort, { once: true });
   const fingerprint = path + JSON.stringify(body);
   const collaboration =
     method === "POST" && /\/(messages|updates|comments|feedback)$/.test(path);
+  const multipart = typeof FormData !== "undefined" && body instanceof FormData;
   if (collaboration && !submissions.has(fingerprint))
     submissions.set(fingerprint, crypto.randomUUID());
   try {
@@ -74,13 +76,17 @@ export async function api<T>(
       credentials: "same-origin",
       signal: controller.signal,
       headers: {
-        ...(body !== undefined ? { "Content-Type": "application/json" } : {}),
+        ...(body !== undefined && !multipart
+          ? { "Content-Type": "application/json" }
+          : {}),
         ...(token ? { "X-CSRF-Token": token } : {}),
         ...(collaboration
           ? { "Idempotency-Key": submissions.get(fingerprint)! }
           : {}),
       },
-      ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+      ...(body !== undefined
+        ? { body: multipart ? body : JSON.stringify(body) }
+        : {}),
     });
     if (!response.ok) {
       const payload = await response.json().catch(() => null);

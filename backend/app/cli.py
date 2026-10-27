@@ -9,7 +9,8 @@ from .models import (
     Agency,
     User,
 )
-from .security import passwords
+from .security import hash_password
+from .password_policy import MIN_PASSWORD_LENGTH, validate_new_password
 from .mail import queue_action
 
 
@@ -19,9 +20,15 @@ def create_admin():
     ).lower()
     name = input("Admin name: ").strip()
     agency_name = input("Agency name: ").strip()
-    password = getpass.getpass("Password (at least 10 characters): ")
-    if not name or not agency_name or not 10 <= len(password) <= 128:
-        raise SystemExit("Provide names and a password between 10 and 128 characters.")
+    password = getpass.getpass(
+        f"Password (at least {MIN_PASSWORD_LENGTH} characters): "
+    )
+    if not name or not agency_name:
+        raise SystemExit("Provide an administrator name and agency name.")
+    try:
+        validate_new_password(password)
+    except ValueError as error:
+        raise SystemExit(str(error)) from None
     with SessionLocal() as db:
         if db.scalar(select(User).where(User.email == email)):
             raise SystemExit("That email already exists. No changes made.")
@@ -33,7 +40,7 @@ def create_admin():
             email=email,
             role="admin",
             agency_id=agency.id,
-            password_hash=passwords.hash(password),
+            password_hash=hash_password(password),
         )
         db.add(user)
         db.flush()

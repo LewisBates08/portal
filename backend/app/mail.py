@@ -16,10 +16,14 @@ def require_mail(email=None):
             "Account email is not configured yet. Please try again once setup is complete.",
         )
     allowed = get_settings().mail_allowed_recipients
-    if email and allowed and email.lower() not in {
-        value.strip().lower() for value in allowed.split(",")
-    }:
-        raise HTTPException(503, "Email is currently limited to approved test accounts.")
+    if (
+        email
+        and allowed
+        and email.lower() not in {value.strip().lower() for value in allowed.split(",")}
+    ):
+        raise HTTPException(
+            503, "Email is currently limited to approved test accounts."
+        )
 
 
 def queue_action(db, email, kind, payload, minutes):

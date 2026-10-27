@@ -203,6 +203,7 @@ export function Field({
   required = false,
   children,
   maxLength,
+  minLength,
 }: {
   label: string;
   name: string;
@@ -211,6 +212,7 @@ export function Field({
   required?: boolean;
   children?: ReactNode;
   maxLength?: number;
+  minLength?: number;
 }) {
   return (
     <label className="field">
@@ -234,7 +236,7 @@ export function Field({
           defaultValue={value}
           required={required}
           maxLength={maxLength || (type === "url" ? 2048 : 160)}
-          minLength={type === "password" ? 10 : undefined}
+          minLength={minLength}
         />
       )}
     </label>

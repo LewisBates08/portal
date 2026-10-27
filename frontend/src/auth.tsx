@@ -314,12 +314,12 @@ export function RegisterPage() {
           required
         />
         <label className="field">
-          <span>Password (at least 10 characters)</span>
+          <span>Password (at least 15 characters)</span>
           <input
             name="password"
             type="password"
             autoComplete="new-password"
-            minLength={10}
+            minLength={15}
             maxLength={128}
             required
           />
@@ -330,7 +330,7 @@ export function RegisterPage() {
             name="confirm_password"
             type="password"
             autoComplete="new-password"
-            minLength={10}
+            minLength={15}
             maxLength={128}
             required
           />
@@ -450,9 +450,10 @@ export function InvitePage() {
                 <>
                   <Field label="Your name" name="name" required />
                   <Field
-                    label="Choose a password (at least 10 characters)"
+                    label="Choose a password (at least 15 characters)"
                     name="password"
                     type="password"
+                    minLength={15}
                     required
                   />
                 </>
@@ -527,9 +528,10 @@ export function AccountPage() {
         >
           {kind === "reset" ? (
             <Field
-              label="New password (at least 10 characters)"
+              label="New password (at least 15 characters)"
               name="password"
               type="password"
+              minLength={15}
               required
             />
           ) : kind === "verify" ? (

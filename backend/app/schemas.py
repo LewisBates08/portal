@@ -9,6 +9,7 @@ from pydantic import (
     field_validator,
     model_validator,
 )
+from .password_policy import NewPassword
 
 Short = Annotated[str, Field(min_length=1, max_length=160)]
 Body = Annotated[str, Field(min_length=1, max_length=10000)]
@@ -64,7 +65,7 @@ class Login(Input):
 class Register(Login):
     name: Short
     agency_name: Short
-    password: Annotated[str, Field(min_length=10, max_length=128)]
+    password: NewPassword
 
 
 class InviteCreate(Input):
@@ -80,7 +81,7 @@ class InviteLookup(Input):
 
 class AcceptInvite(InviteLookup):
     name: Short | None = None
-    password: Annotated[str, Field(min_length=10, max_length=128)] | None = None
+    password: NewPassword | None = None
 
 
 class OrgCreate(Input):
@@ -112,10 +113,33 @@ class CandidateData(Input):
     name: Short
     current_role: str = Field(default="", max_length=160)
     company: str = Field(default="", max_length=160)
+    email: EmailStr | None = None
+    phone: str = Field(default="", max_length=40)
+    skills: list[str] = Field(default_factory=list, max_length=40)
     summary: str = Field(default="", max_length=10000)
     cv_url: str | None = Field(default=None, max_length=2048)
     stage: Stage = "Identified"
     client_visible: bool = False
+
+    @field_validator("skills", mode="before")
+    @classmethod
+    def clean_skills(cls, value):
+        if not isinstance(value, list):
+            raise ValueError("Skills must be a list of text values.")
+        cleaned = []
+        seen = set()
+        for skill in value:
+            if not isinstance(skill, str):
+                raise ValueError("Each skill must be text.")
+            item = skill.strip()
+            if not item or len(item) > 80:
+                raise ValueError("Each skill must contain 1 to 80 characters.")
+            if item.casefold() not in seen:
+                seen.add(item.casefold())
+                cleaned.append(item)
+        if len(cleaned) > 40:
+            raise ValueError("At most 40 skills can be saved.")
+        return cleaned
 
 
 class TextData(Input):
@@ -148,7 +172,7 @@ class EmailRequest(Input):
 
 
 class ResetPassword(InviteLookup):
-    password: Annotated[str, Field(min_length=10, max_length=128)]
+    password: NewPassword
 
 
 class CodeInput(Input):

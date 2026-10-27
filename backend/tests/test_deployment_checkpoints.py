@@ -84,7 +84,10 @@ def test_production_config_and_repr_hide_secrets():
 
 def test_mail_can_be_explicitly_disabled_without_disabling_production_security():
     settings = valid_settings(
-        mail_enabled=False, smtp_host="localhost", smtp_user="", smtp_password="",
+        mail_enabled=False,
+        smtp_host="localhost",
+        smtp_user="",
+        smtp_password="",
         mail_from="Searchroom <no-reply@localhost>",
     )
     assert settings.production
@@ -96,14 +99,21 @@ def test_mail_can_be_explicitly_disabled_without_disabling_production_security()
 
 
 def test_production_relay_requires_london_https_and_private_token():
-    values = dict(mail_transport="relay", smtp_user="", smtp_password="",
-                  mail_relay_url="https://relay.lambda-url.eu-west-2.on.aws/",
-                  mail_relay_token="relay-test-secret-" * 5)
+    values = dict(
+        mail_transport="relay",
+        smtp_user="",
+        smtp_password="",
+        mail_relay_url="https://relay.lambda-url.eu-west-2.on.aws/",
+        mail_relay_token="relay-test-secret-" * 5,
+    )
     settings = valid_settings(**values)
     assert settings.mail_relay_token not in repr(settings)
-    for url in ("http://relay.lambda-url.eu-west-2.on.aws/", "https://evil.invalid/",
-                "https://relay.lambda-url.eu-west-2.on.aws@evil.invalid/",
-                "https://relay.lambda-url.eu-west-2.on.aws/?secret=value"):
+    for url in (
+        "http://relay.lambda-url.eu-west-2.on.aws/",
+        "https://evil.invalid/",
+        "https://relay.lambda-url.eu-west-2.on.aws@evil.invalid/",
+        "https://relay.lambda-url.eu-west-2.on.aws/?secret=value",
+    ):
         with pytest.raises(ValidationError):
             valid_settings(**(values | {"mail_relay_url": url}))
     with pytest.raises(ValidationError):
@@ -121,6 +131,59 @@ def test_validation_does_not_echo_credentials(client):
         "input" not in error and "ctx" not in error
         for error in response.json()["detail"]
     )
+
+
+def test_body_limit_rejects_declared_and_streamed_oversize_bodies(client):
+    boundary = client.post("/api/v1/auth/login", content=b"x" * (1024 * 1024))
+    assert boundary.status_code == 422
+
+    declared = client.post(
+        "/api/v1/auth/login",
+        content=b"{}",
+        headers={"Content-Length": str(1024 * 1024 + 1)},
+    )
+    assert declared.status_code == 413
+    assert declared.json() == {"detail": "Request is too large."}
+
+    def chunks():
+        yield b"x" * (512 * 1024)
+        yield b"x" * (512 * 1024 + 1)
+
+    streamed = client.post("/api/v1/auth/login", content=chunks())
+    assert streamed.status_code == 413
+    assert streamed.json() == {"detail": "Request is too large."}
+
+
+def test_readiness_compares_all_database_and_repository_heads(monkeypatch):
+    from app import main
+
+    class Results:
+        def __init__(self, values):
+            self.values = values
+
+        def all(self):
+            return self.values
+
+    class Database:
+        def __init__(self, values):
+            self.values = values
+
+        def scalars(self, _statement):
+            if isinstance(self.values, Exception):
+                raise self.values
+            return Results(self.values)
+
+    monkeypatch.setattr(
+        main, "repository_migration_heads", lambda: frozenset({"head-a", "head-b"})
+    )
+    assert main.ready(Database(["head-a", "head-b"])) == {"status": "ready"}
+    for values in (["head-a"], [], ["stale"]):
+        with pytest.raises(Exception) as failure:
+            main.ready(Database(values))
+        assert failure.value.status_code == 503
+    with pytest.raises(Exception) as failure:
+        main.ready(Database(RuntimeError("missing alembic table")))
+    assert failure.value.status_code == 503
 
 
 def test_cross_origin_requests_are_not_granted_cors(client):

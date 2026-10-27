@@ -1,0 +1,10 @@
+environment = "staging"
+hostname = "staging.portal.radiumsearch.com"
+# Separate identity prevents two Terraform states from managing the same SES identity.
+sender_domain = "staging.portal.radiumsearch.com"
+alert_email = "lewisbates2008@outlook.com"
+github_oidc_provider_arn = "arn:aws:iam::ACCOUNT_ID:oidc-provider/token.actions.githubusercontent.com"
+budget_usd = 75
+cost_reviewed = false
+bootstrap_database_access = false
+protect_database = true

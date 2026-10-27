@@ -56,7 +56,7 @@ def account_result(db, request, user):
 
 @router.get("/csrf")
 def csrf(request: Request, response: Response, db: Session = Depends(get_db)):
-    auth_limit(request, db)
+    auth_limit(request)
     if not session_row(request, db, False):
         issue_session(db, request, response)
         # The raw token exists only in Set-Cookie; recover it from the response cookie.
@@ -73,7 +73,7 @@ def csrf(request: Request, response: Response, db: Session = Depends(get_db)):
 @router.post("/register", status_code=202)
 def register(data: Register, request: Request, db: Session = Depends(get_db)):
     require_mail()
-    auth_limit(request, db, data.email)
+    auth_limit(request, data.email)
     # Do the password work for both existing and new addresses.
     encoded = hash_password(data.password)
     email_lock(db, data.email)
@@ -97,7 +97,7 @@ def register(data: Register, request: Request, db: Session = Depends(get_db)):
 def login(
     data: Login, request: Request, response: Response, db: Session = Depends(get_db)
 ):
-    auth_limit(request, db, data.email)
+    auth_limit(request, data.email)
     user = db.scalar(select(User).where(User.email == data.email))
     valid = verify_password(data.password, user.password_hash if user else DUMMY_HASH)
     if not user or not valid or not user.active or not user.email_verified:
@@ -143,7 +143,7 @@ def logout(request: Request, response: Response, db: Session = Depends(get_db)):
 @router.post("/forgot-password", status_code=202)
 def forgot(data: EmailRequest, request: Request, db: Session = Depends(get_db)):
     require_mail()
-    auth_limit(request, db, data.email)
+    auth_limit(request, data.email)
     user = db.scalar(
         select(User).where(
             User.email == data.email,
@@ -160,7 +160,7 @@ def forgot(data: EmailRequest, request: Request, db: Session = Depends(get_db)):
 @router.post("/resend-verification", status_code=202)
 def resend(data: EmailRequest, request: Request, db: Session = Depends(get_db)):
     require_mail()
-    auth_limit(request, db, data.email)
+    auth_limit(request, data.email)
     email_lock(db, data.email)
     user = db.scalar(
         select(User).where(User.email == data.email, User.active.is_(True))
@@ -197,7 +197,7 @@ def action(db, token, kind):
 
 @router.post("/reset-password", status_code=204)
 def reset(data: ResetPassword, request: Request, db: Session = Depends(get_db)):
-    auth_limit(request, db)
+    auth_limit(request)
     preview = db.get(EmailAction, digest(data.token))
     if not preview:
         raise HTTPException(400, "This link has expired or has already been used.")
@@ -223,7 +223,7 @@ def reset(data: ResetPassword, request: Request, db: Session = Depends(get_db)):
 
 @router.post("/verify-email", status_code=204)
 def verify_email(data: InviteLookup, request: Request, db: Session = Depends(get_db)):
-    auth_limit(request, db)
+    auth_limit(request)
     # Acquire the email lock before row locks to avoid simultaneous-token deadlocks.
     preview = db.get(EmailAction, digest(data.token))
     if not preview:
@@ -342,7 +342,7 @@ def grant_invite(db, invite, user):
 
 @router.post("/invitation")
 def invitation(data: InviteLookup, request: Request, db: Session = Depends(get_db)):
-    auth_limit(request, db)
+    auth_limit(request)
     invite = get_invite(db, data.token)
     return {
         "email": invite.email,
@@ -354,7 +354,7 @@ def invitation(data: InviteLookup, request: Request, db: Session = Depends(get_d
 
 @router.post("/accept-invitation")
 def accept(data: AcceptInvite, request: Request, db: Session = Depends(get_db)):
-    auth_limit(request, db)
+    auth_limit(request)
     preview = get_invite(db, data.token)
     email_lock(db, preview.email)
     invite = lock_invite(db, preview.id)
@@ -370,7 +370,7 @@ def accept(data: AcceptInvite, request: Request, db: Session = Depends(get_db)):
         raise HTTPException(403, "Sign out before creating the invited account.")
     if not data.name or not data.password:
         raise HTTPException(
-            422, "Enter your name and a password of at least 10 characters."
+            422, "Enter your name and a password of at least 15 characters."
         )
     queue_action(
         db,
@@ -393,7 +393,7 @@ def mfa_setup(
     db: Session = Depends(get_db),
     user: User = Depends(signed_in_user),
 ):
-    auth_limit(request, db, user.email)
+    auth_limit(request, user.email)
     db.refresh(user, with_for_update=True)
     if user.mfa_enabled:
         raise HTTPException(409, "Authenticator is already configured.")
@@ -416,7 +416,7 @@ def mfa_verify(
     db: Session = Depends(get_db),
     user: User = Depends(signed_in_user),
 ):
-    auth_limit(request, db, user.email)
+    auth_limit(request, user.email)
     db.refresh(user, with_for_update=True)
     validate_code(user, data.code)
     recovery = []

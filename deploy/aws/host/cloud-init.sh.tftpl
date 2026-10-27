@@ -1,0 +1,19 @@
+#!/bin/bash
+set -euo pipefail
+export DEBIAN_FRONTEND=noninteractive
+# EIP association follows instance creation. Retry while it becomes reachable.
+for attempt in $(seq 1 30); do
+  apt-get update && break
+  sleep 10
+done
+apt-get install -y docker.io docker-compose-v2 caddy awscli python3-boto3 python3-psycopg2 python3-cryptography unattended-upgrades curl
+install -d -m 700 /etc/searchroom /var/lib/searchroom
+printf '%s' '${config}' | base64 -d > /etc/searchroom/host.json
+chmod 600 /etc/searchroom/host.json
+cat > /etc/apt/apt.conf.d/52searchroom <<'APT'
+Unattended-Upgrade::Automatic-Reboot "true";
+Unattended-Upgrade::Automatic-Reboot-Time "04:30";
+APT
+systemctl enable --now docker
+# No default public page; install.sh configures HTTPS after DNS is ready.
+systemctl disable --now caddy

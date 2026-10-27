@@ -52,8 +52,23 @@ jobs:
           echo "::add-mask::$test_password"
           echo "E2E_PASSWORD=$test_password" >> "$GITHUB_ENV"
       - run: python scripts/check_env_history.py
-      - run: pip install -r backend/requirements.lock pytest httpx pip-audit
-      - run: pytest -c backend/pytest.ini -q
+      - run: pip install -r backend/requirements.lock -r backend/requirements-dev.txt pip-audit
+      - name: Ruff lint and format gates
+        run: |
+          ruff check backend/app backend/tests
+          ruff format --check backend/app backend/tests
+      - name: Migration graph and model check
+        working-directory: backend
+        run: |
+          alembic upgrade head
+          alembic check
+      - name: Backend tests and measured coverage
+        run: pytest -c backend/pytest.ini -q --cov=backend/app --cov-report=term --cov-report=xml:coverage.xml
+      - uses: actions/upload-artifact@v4
+        with:
+          name: backend-coverage
+          path: coverage.xml
+          retention-days: 30
       - run: pip-audit -r backend/requirements.lock
       - run: npm ci && npm run build && npm test && npm audit --audit-level=high
         working-directory: frontend

@@ -1,8 +1,15 @@
 from .responses import PageView
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from sqlalchemy import select, func
 from sqlalchemy.orm import Session
 from .access import child, project_access, project_editor, visible_candidate
+from .cv_extraction import (
+    CVExtractionError,
+    CandidateExtraction,
+    MAX_CV_BYTES,
+    extract_candidate,
+    validate_uploaded_cv,
+)
 from .database import get_db
 from .models import (
     Candidate,
@@ -152,7 +159,15 @@ def candidates(
     query = select(Candidate).where(Candidate.project_id == project.id)
     if user.role == "client":
         query = query.where(Candidate.client_visible.is_(True))
-    return page(db, query, Candidate, paging, record)
+    return page(db, query, Candidate, paging, lambda row: candidate_record(row, user))
+
+
+def candidate_record(candidate: Candidate, user: User):
+    data = record(candidate)
+    if user.role == "client":
+        data["email"] = None
+        data["phone"] = ""
+    return data
 
 
 @router.post("/{project_id}/candidates", status_code=201, response_model=CandidateView)
@@ -180,6 +195,42 @@ def create_candidate(
     return record(candidate)
 
 
+@router.post(
+    "/{project_id}/candidates/extract",
+    response_model=CandidateExtraction,
+)
+async def extract_candidate_cv(
+    project: Project = Depends(project_editor),
+    cv_file: UploadFile | None = File(default=None),
+    cv_url: str | None = Form(default=None, max_length=2048),
+):
+    """Return a validated draft; candidate data is not saved by this endpoint."""
+    del project  # Authorization is enforced by project_editor.
+    if (cv_file is None) == (cv_url is None or not cv_url.strip()):
+        raise HTTPException(422, "Provide either a CV upload or a CV URL.")
+
+    upload = None
+    if cv_file is not None:
+        filename = cv_file.filename or ""
+        content_type = cv_file.content_type or ""
+        content = await cv_file.read(MAX_CV_BYTES + 1)
+        await cv_file.close()
+        try:
+            validate_uploaded_cv(filename, content_type, content)
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        upload = (filename, content_type, content)
+
+    try:
+        return extract_candidate(upload=upload, cv_url=cv_url)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(503, str(exc)) from exc
+    except CVExtractionError as exc:
+        raise HTTPException(502, str(exc)) from exc
+
+
 @router.get("/{project_id}/candidates/{candidate_id}", response_model=CandidateView)
 def get_candidate(
     candidate_id: int,
@@ -187,7 +238,9 @@ def get_candidate(
     db: Session = Depends(get_db),
     user: User = Depends(current_user),
 ):
-    return record(visible_candidate(db, candidate_id, project.id, user))
+    return candidate_record(
+        visible_candidate(db, candidate_id, project.id, user), user
+    )
 
 
 @router.put("/{project_id}/candidates/{candidate_id}", response_model=CandidateView)

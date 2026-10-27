@@ -12,7 +12,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 from pwdlib import PasswordHash
 from .config import get_settings
-from .database import get_db
+from .database import get_db, rate_limit_session
 from .models import WebSession, RateBucket, User, AuditEvent, now
 
 passwords = PasswordHash.recommended()
@@ -151,8 +151,7 @@ def revoke_sessions(db, user_id):
     db.execute(delete(WebSession).where(WebSession.user_id == user_id))
 
 
-def throttle(db, key, limit, seconds=60):
-    """Shared atomic fixed windows; commit independently of the guarded action."""
+def _persist_throttle(db, key, limit, seconds=60):
     stamp = int(time.time()) // seconds
     hashed = hmac.new(
         get_settings().jwt_secret.encode(), f"{key}:{stamp}".encode(), hashlib.sha256
@@ -174,11 +173,19 @@ def throttle(db, key, limit, seconds=60):
         )
 
 
-def auth_limit(request, db, email=""):
-    throttle(
-        db,
-        "auth-ip:" + (request.client.host if request.client else "unknown"),
-        get_settings().auth_rate_limit,
-    )
-    if email:
-        throttle(db, "auth-account:" + email.lower(), 10, 600)
+def throttle(key, limit, seconds=60):
+    """Shared fixed windows with an explicitly independent transaction."""
+    with rate_limit_session() as db:
+        _persist_throttle(db, key, limit, seconds)
+
+
+def auth_limit(request, email=""):
+    """Persist counters independently from the guarded business transaction."""
+    with rate_limit_session() as db:
+        _persist_throttle(
+            db,
+            "auth-ip:" + (request.client.host if request.client else "unknown"),
+            get_settings().auth_rate_limit,
+        )
+        if email:
+            _persist_throttle(db, "auth-account:" + email.lower(), 10, 600)

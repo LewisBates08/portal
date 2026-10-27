@@ -9,7 +9,13 @@ import {
   Protected,
   RegisterPage,
 } from "./auth";
-import { Dashboard, Layout, NotFound, ProjectPage } from "./pages";
+import {
+  CandidateUploadPage,
+  Dashboard,
+  Layout,
+  NotFound,
+  ProjectPage,
+} from "./pages";
 import { AdminPage } from "./admin";
 import "./styles.css";
 
@@ -25,6 +31,10 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
           <Route element={<Protected />}>
             <Route element={<Layout />}>
               <Route index element={<Dashboard />} />
+              <Route
+                path="projects/:projectId/candidates/upload"
+                element={<CandidateUploadPage />}
+              />
               <Route
                 path="projects/:projectId/:tab?"
                 element={<ProjectPage />}

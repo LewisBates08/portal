@@ -144,17 +144,26 @@ class Settings(BaseSettings):
                 relay = urlsplit(self.mail_relay_url)
                 if (
                     relay.scheme != "https"
-                    or not (relay.hostname or "").endswith(".lambda-url.eu-west-2.on.aws")
+                    or not (relay.hostname or "").endswith(
+                        ".lambda-url.eu-west-2.on.aws"
+                    )
                     or relay.netloc != relay.hostname
                     or relay.path not in ("", "/")
-                    or relay.query or relay.fragment
+                    or relay.query
+                    or relay.fragment
                     or len(self.mail_relay_token) < 48
                 ):
-                    raise ValueError("Configure the authenticated London HTTPS mail relay.")
-            if self.mail_enabled and self.mail_transport == "smtp" and (
-                not self.smtp_user
-                or not self.smtp_password
-                or self.smtp_host != "email-smtp.eu-west-2.amazonaws.com"
+                    raise ValueError(
+                        "Configure the authenticated London HTTPS mail relay."
+                    )
+            if (
+                self.mail_enabled
+                and self.mail_transport == "smtp"
+                and (
+                    not self.smtp_user
+                    or not self.smtp_password
+                    or self.smtp_host != "email-smtp.eu-west-2.amazonaws.com"
+                )
             ):
                 raise ValueError("Configure authenticated Amazon SES SMTP in London.")
             if any(

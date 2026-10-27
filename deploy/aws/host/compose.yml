@@ -1,0 +1,33 @@
+name: searchroom
+x-app: &app
+  image: ${RUNTIME_IMAGE:?required}
+  restart: unless-stopped
+  read_only: true
+  user: '10001:10001'
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  tmpfs: [/tmp:size=32m,mode=1777]
+  volumes: [/etc/searchroom/rds-ca.pem:/etc/searchroom/rds-ca.pem:ro]
+  logging:
+    driver: awslogs
+    options:
+      awslogs-region: eu-west-2
+      awslogs-group: ${LOG_GROUP:?required}
+      tag: '{{.Name}}'
+services:
+  web:
+    <<: *app
+    env_file: /etc/searchroom/web.env
+    ports: ['127.0.0.1:8000:8000']
+    mem_limit: 768m
+    cpus: 1.0
+  mail:
+    <<: *app
+    env_file: /etc/searchroom/job.env
+    command: [python, -m, app.operations, mail-loop]
+    mem_limit: 256m
+    cpus: 0.5
+networks:
+  default:
+    ipam:
+      config: [{subnet: 172.28.0.0/24, gateway: 172.28.0.1}]

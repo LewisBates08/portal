@@ -57,6 +57,33 @@ def test_resend_pending_signup(client, db):
     assert len(db.scalars(select(MailOutbox)).all()) == count
 
 
+@pytest.mark.parametrize("password", ["TooShort123!", "passwordpassword"])
+def test_shared_password_policy_rejects_registration(client, password):
+    response = client.post(
+        API + "/register",
+        json={
+            "email": "policy@example.com",
+            "name": "Policy",
+            "agency_name": "Policy Agency",
+            "password": password,
+        },
+    )
+    assert response.status_code == 422
+
+
+def test_shared_password_policy_rejects_reset_and_invitation(client):
+    reset = client.post(
+        API + "/reset-password",
+        json={"token": "unused", "password": "TooShort123!"},
+    )
+    invitation = client.post(
+        API + "/accept-invitation",
+        json={"token": "unused", "name": "Policy", "password": "TooShort123!"},
+    )
+    assert reset.status_code == 422
+    assert invitation.status_code == 422
+
+
 def test_registration_email_mfa_and_logout(client, db):
     payload = {
         "email": "new@example.com",

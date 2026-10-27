@@ -15,3 +15,12 @@ dist/
 .DS_Store
 frontend/playwright-report/
 frontend/test-results/
+
+# AWS infrastructure and local credentials/evidence
+**/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+*.tfvars
+*.backend.hcl
+recoverycodes.txt
