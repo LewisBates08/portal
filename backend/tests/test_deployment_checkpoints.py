@@ -99,6 +99,20 @@ def test_production_database_url_preserves_supplied_ca_path():
     assert "sslrootcert=%2Ftmp%2Fprovider-ca.pem" in settings.database_url
 
 
+def test_mail_can_be_disabled_without_weakening_other_production_checks():
+    settings = valid_settings(
+        mail_enabled=False,
+        smtp_host="localhost",
+        smtp_user="",
+        smtp_password="",
+        mail_from="Searchroom <no-reply@localhost>",
+    )
+    assert settings.production
+    assert settings.mail_enabled is False
+    with pytest.raises(ValidationError):
+        valid_settings(mail_enabled=False, frontend_url="http://localhost:5173")
+
+
 def test_validation_does_not_echo_credentials(client):
     response = client.post(
         "/api/v1/auth/login",

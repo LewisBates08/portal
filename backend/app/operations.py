@@ -43,6 +43,8 @@ def migrate():
 
 def mail():
     settings = get_settings()
+    if not settings.mail_enabled:
+        return
     # Lock one row at a time; multiple job instances cannot claim the same mail.
     for _ in range(100):
         with SessionLocal.begin() as db:

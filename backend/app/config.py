@@ -59,6 +59,7 @@ class Settings(BaseSettings):
     session_idle_minutes: int = Field(default=30, ge=1)
     pool_size: int = Field(default=5, ge=1, le=20)
     static_dir: str = ""
+    mail_enabled: bool = True
     smtp_host: str = "localhost"
     smtp_port: int = 1025
     smtp_user: str = ""
@@ -138,7 +139,7 @@ class Settings(BaseSettings):
             ):
                 raise ValueError("Replace the placeholder signing secret.")
             Fernet(self.encryption_key.encode())
-            if (
+            if self.mail_enabled and (
                 not self.smtp_user
                 or not self.smtp_password
                 or self.smtp_host != "email-smtp.eu-west-2.amazonaws.com"
@@ -155,7 +156,9 @@ class Settings(BaseSettings):
                 for marker in ("replace", "your-domain", "placeholder")
             ):
                 raise ValueError("Replace all credential and sender placeholders.")
-            if not self.static_dir or "@localhost" in self.mail_from:
+            if not self.static_dir or (
+                self.mail_enabled and "@localhost" in self.mail_from
+            ):
                 raise ValueError("Set static_dir and a verified sender.")
         return self
 
