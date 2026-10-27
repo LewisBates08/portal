@@ -86,6 +86,7 @@ def test_production_database_url_enforces_full_tls_verification():
     settings = valid_settings(
         database_url="postgresql+psycopg://app_owner:private@db.example.net/searchroom?sslmode=require"
     )
+    assert settings.database_url.startswith("postgresql+psycopg://")
     assert "sslmode=verify-full" in settings.database_url
     assert "sslrootcert=system" in settings.database_url
 

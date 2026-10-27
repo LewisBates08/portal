@@ -95,7 +95,7 @@ class Settings(BaseSettings):
             query = dict(url.query)
             query["sslmode"] = "verify-full"
             query.setdefault("sslrootcert", "system")
-            url = url.set(query=query)
+            url = url.set(drivername="postgresql+psycopg", query=query)
             self.database_url = url.render_as_string(hide_password=False)
             if (
                 not url.password
